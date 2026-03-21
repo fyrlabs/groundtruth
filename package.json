@@ -26,7 +26,7 @@
     "agents/",
     "commands/",
     "tracking/",
-    "output/",
+    "output/groundtruth-report.md",
     "SKILL.md",
     "README.md",
     "LICENSE"

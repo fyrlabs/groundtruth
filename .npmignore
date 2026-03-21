@@ -1,3 +1,4 @@
 sources/
 .git/
 .gitignore
+output/.gitkeep
