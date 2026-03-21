@@ -1,0 +1,37 @@
+{
+  "name": "groundtruth",
+  "version": "0.1.0",
+  "description": "Verified research documentation for GitHub repos. Multi-agent Claude Code skill that reads actual code, not just READMEs.",
+  "keywords": [
+    "claude-code",
+    "claude",
+    "ai",
+    "research",
+    "verification",
+    "agents",
+    "mcp"
+  ],
+  "author": "sathvikc",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/sathvikc/ground-truth"
+  },
+  "homepage": "https://github.com/sathvikc/ground-truth#readme",
+  "bin": {
+    "groundtruth": "./bin/install.js"
+  },
+  "files": [
+    "bin/",
+    "agents/",
+    "commands/",
+    "tracking/",
+    "output/",
+    "SKILL.md",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=18"
+  }
+}
