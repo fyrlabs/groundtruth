@@ -1,5 +1,5 @@
 {
-  "name": "groundtruth",
+  "name": "@sathvikc/groundtruth",
   "version": "0.1.0",
   "description": "Verified research documentation for GitHub repos. Multi-agent Claude Code skill that reads actual code, not just READMEs.",
   "keywords": [

@@ -106,7 +106,7 @@ function main() {
   log('  3. Or run: /analyze /path/to/urls.txt');
   log('');
   log('To update later:');
-  log('  npx groundtruth');
+  log('  npx @sathvikc/groundtruth');
   log('');
 }
 
