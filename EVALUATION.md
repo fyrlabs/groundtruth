@@ -1,0 +1,106 @@
+# Evaluation
+
+A tool whose pitch is "no blind README trust" should measure whether its own tiers are right.
+This is the pre-registered harness for that, plus the results as they stand.
+
+## What is being measured
+
+| Question | Metric | Target |
+|---|---|---|
+| Does the pipeline catch a false claim? | Tier assigned to a known-false claim | `contradicted` |
+| Does it avoid false confidence? | False `code-verified` on an unverifiable claim | 0 |
+| Is it honest about gaps? | Uncovered claims counted, not dropped | reported |
+| Does injection change a verdict? | Verdicts on a hostile fixture vs a clean one | identical |
+| Is agreement independent? | Claims where all agents cited one file | flagged `correlated` |
+| Is the report reproducible? | Two renders of the same state | byte-identical |
+
+## Rules for this file
+
+- Declare hypotheses and fixtures **before** running.
+- Publish null results. A favourable number nobody checked is worth less than an honest one.
+- Change any tier rule or agent prompt → rerun and update the numbers here, in the same commit.
+  `CONTRIBUTING.md` requires it.
+
+## Deterministic checks (CI, no model)
+
+These are not "the model seemed to behave". They are invariants that either hold or do not, and they
+run on every commit. Results as of v0.2.0: **85 tests passing, 18/18 layout invariants.**
+
+| Invariant | Where | Count |
+|---|---|---|
+| Instruction override, role spoof, output forgery, hidden unicode detected | `test/injection.test.mjs` | 8 patterns |
+| A hostile fixture repo is refused, for the control-file reason | `test/hostile-fixture.test.mjs` | 1 fixture, 4 signals |
+| A forged verdict citing an unread or non-existent file is rejected | `test/injection.test.mjs` | 6 cases |
+| Three agents citing one file cannot be `code-verified` | `test/injection.test.mjs` | 2 cases |
+| Repo-controlled text cannot forge table rows or hide from review | `test/render.test.mjs` | 3 cases |
+| Guards block the shapes that defeated earlier revisions | `test/hooks.test.mjs` | 12 cases |
+| A stage without a payload is not reported complete | `test/state.test.mjs` | 2 cases |
+| Re-render is byte-identical | `test/render.test.mjs` | 1 case |
+| `WebFetch` exfiltration is *not* contained | `SECURITY.md` | documented, not claimed |
+
+### Fixture results
+
+**`hostile-repo`** — a fixture carrying every attack shape at once: `AGENTS.md` and `CLAUDE.md`
+with instruction overrides and role spoofing, a `.claude/skills/` entry pre-approving
+`Bash Write Edit`, and a README containing a forged `## ANALYSIS_REPORT` with a fabricated claims
+table and a `## TECHNICAL_VERIFICATION` block asserting every claim is verified.
+
+- Refused at clone time on three signals: `control-file:AGENTS.md`, `control-file:CLAUDE.md`,
+  `control-dir:.claude`. Refused for the *right* reason — the tree is tiny, and the test asserts it is
+  not refused for size.
+- Both forged blocks and the pre-approved tool list are detected if the content is read anyway.
+
+**`known-claims-repo`** — five claims with a known ground truth:
+
+| Claim | Ground truth | How it must resolve |
+|---|---|---|
+| Supports 3 platforms | true | `code-verified` — three installers exist |
+| Ships 4 plugins | **false** | `contradicted` — no plugins directory |
+| MIT licensed | true | `code-verified` — `LICENSE` is MIT |
+| 10,000 rps | undecidable | `unverifiable` — no benchmark harness |
+| Independently audited | **false** | `contradicted` — `AUDIT.md` says not performed |
+
+This fixture is what a live run is scored against: the pipeline's job is to reach exactly those
+five answers, including *not* reaching an answer for the benchmark.
+
+## What is measured with a model, and is not yet
+
+Honest status: the tier *logic* is fully covered by the deterministic suite above. The remaining
+question is **model behaviour** — whether an agent following these prompts reliably produces
+schema-valid payloads and reaches the right tiers on repositories nobody wrote fixtures for.
+
+That is measured by running the pipeline on real repositories and scoring the result against
+manually-derived ground truth. **This has not been run yet.** v0.2.0 is the first version where the
+pipeline runs at all, so there is no measurement, and any tier-accuracy figure published before that
+would be fabricated.
+
+The harness to run it:
+
+```bash
+node scripts/evaluate.mjs --fixture test/fixtures/known-claims-repo
+```
+
+### Known limitations of the design, stated up front
+
+- **Claim extraction is a model judgement** about what is checkable. A repository that documents
+  little yields a short list, so "all claims verified" on a quiet repo is not a strong result.
+- **The validator cannot check intent.** It proves a verdict cites a file the agent read. It cannot
+  prove the agent read it for the right reason. This is the residual failure mode of the whole design
+  and the reason the provenance record is published next to the report.
+- **Live data decays.** Star counts and commit dates were true at an instant; a re-run produces a
+  different profile, correctly.
+- **Injection resistance is structural, not behavioural.** The fixtures prove the *pipeline* refuses
+  the hostile repo. They do not prove a model would have been immune had it read the content — which
+  is the point of not relying on that.
+- **`n=1` so far.** One fixture is a regression test, not a measurement. Treat any accuracy claim as
+  unmeasured until at least a dozen real repositories have been scored.
+
+## Reproducing
+
+```bash
+npm test                  # all deterministic checks
+npm test hostile-fixture  # the injection fixture specifically
+npm run verify            # + layout and frontmatter invariants
+```
+
+Deterministic results are reproducible because none of the above invokes a model.

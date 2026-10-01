@@ -1,111 +1,185 @@
 # Groundtruth
 
-**Verified research documentation for GitHub repos. No hallucinations. No blind README trust.**
+Code-grounded research profiles for GitHub repositories.
 
-Groundtruth is a Claude Code skill that analyzes GitHub repos and produces research documentation where every significant claim has a confidence tier — verified from source code, not taken on faith from README text.
+Point it at a repository. It clones the repo, enumerates every specific claim the project makes
+about itself, and adjudicates each one against the implementation — counting the files rather than
+trusting the stated number, resolving "supports X" to the code that implements it, and checking the
+licence file rather than the badge.
 
-## The Problem
+Every claim in the output carries a tier, a file citation, and — when no verifier could settle it —
+an explicit note that nobody did.
 
-Every tool's README says it's great. Stars can be gamed. Benchmarks are self-reported. "Works with X" often means "we mentioned X in our docs." When you're evaluating tools to adopt, you're mostly reading marketing.
+## What it actually does
 
-Groundtruth reads the actual code.
+```
+/groundtruth:analyze https://github.com/owner/repo [more URLs…]
+/groundtruth:analyze /path/to/urls.txt     # one URL per line, # comments allowed
+/groundtruth:analyze                        # discovery mode: find candidates in your domain
+```
 
-## What It Produces
+For each repository:
 
-A research document (`output/groundtruth-report.md`) where every claim is tagged:
+| Stage | What it does |
+|---|---|
+| **Clone** | Shallow, outside your project, read-only. Repos shipping `CLAUDE.md`/`AGENTS.md` are refused. |
+| **Analyze** | Reads the code to enumerate specific, checkable claims with exact quotes and `file:line`. |
+| **Verify** | Three agents in parallel, each with a **disjoint** evidence surface. |
+| **Spot-check** | Live stats, advisories, deprecation, successor projects. |
+| **Reconcile** | Resolves contradictions, assigns tiers, writes `profile.json`. |
+| **Render** | A script turns state into the report. No model writes the report. |
+
+Re-running resumes from disk. A completed repository is never re-analysed unless its commit changed.
+
+## The tiers
 
 | Tier | Meaning |
-|------|---------|
-| ✅ code-verified | Confirmed by reading source files, manifests, or test suites |
-| ⚠️ self-reported | Found only in documentation; not independently confirmed |
-| ❌ contradicted | Code or external source directly contradicts the claim |
-| 🔍 unverifiable | Requires live execution or data unavailable at analysis time |
+|---|---|
+| ✅ `code-verified` | Confirmed by reading implementation code, manifests, or tests in that repository |
+| ⚠️ `self-reported` | Documented but unconfirmed — code neither confirms nor denies |
+| ❌ `contradicted` | Directly contradicted by code or an authoritative external source |
+| 🔍 `unverifiable` | Needs live execution, credentials, or data unavailable at analysis time |
 
-## Quickstart
+Three properties make these worth more than the symbols suggest:
+
+**A verdict must cite a file that agent actually read.** The validator rejects the payload
+otherwise. An agent cannot cite a file it did not open, and a hostile repository cannot forge a
+verdict because it controls the one file a verdict cannot legitimately cite as evidence.
+
+**Correlated agreement is discounted.** If every agent cited the *same* file, the claim is marked
+`correlated` and their agreement carries no independent weight. Three agents reading one README are
+one opinion counted three times. This is why the verifiers are given non-overlapping evidence
+surfaces in the first place — agents sharing inputs fail together.
+
+**Uncovered claims are counted, not dropped.** Every profile reports how many claims no verifier
+could reach. A report that quietly omits what it could not check is indistinguishable from one that
+found nothing wrong.
+
+## Security
+
+Groundtruth reads repositories it does not control and hands the results to language models, so the
+input is hostile by default. Four layers, in the order of what they actually buy:
+
+1. **Structure** — clones live outside the project tree, repos carrying harness control files are
+   refused outright, clones are read-only, and no agent holds `Write` or `Edit`. This is the real
+   boundary, and no settings file can switch it off.
+2. **Validation** — agents emit JSON, never markdown, and cited files must exist. This defeats
+   output-format forgery, which no instruction-level defence can touch: a README containing a block
+   shaped like Groundtruth's own output is *data shaped like output*, not an instruction.
+3. **Hooks** — guards block fetch-and-execute, credential reads, clone mutation, and writes to
+   harness configuration including Groundtruth's own installed copy.
+4. **Optional guardrails** — `node scripts/install-guardrails.mjs` writes permission deny rules and
+   sandbox settings that a plugin is not permitted to ship.
+
+**Hooks are advisory.** A `.claude/settings.json` in your working directory can set
+`disableAllHooks` and turn them off, which is exactly why the structural layer carries the guarantee.
+
+[SECURITY.md](SECURITY.md) states the threat model and, just as importantly, what is **not**
+defended — including that `WebFetch` exfiltration cannot be contained by any shipped configuration.
+
+## Install
 
 ```bash
-# Install as a Claude Code skill
-npx @fyrlabs/groundtruth
-
-# Analyze repos
-/analyze https://github.com/org/repo1 https://github.com/org/repo2
-
-# Or from a file (one URL per line)
-/analyze /path/to/urls.txt
-
-# Resume an interrupted run
-/analyze
+/plugin marketplace add fyrlabs/groundtruth
+/plugin install groundtruth@fyrlabs
 ```
 
-## How It Works
+Or while working on it:
 
-```
-GitHub URLs
-    ↓
-Clone repos into sources/
-    ↓
-Per repo: Analyzer (Sonnet) reads code
-    ↓
-Three verifiers run in parallel (Sonnet):
-  • Technical — verifies claims from source code
-  • Community — verifies authorship, license, live stats
-  • Conflicts  — verifies platform support, inter-tool conflicts
-    ↓
-Online spot-check (Haiku) — live GitHub stats, deprecation signals
-    ↓
-Meta-reconciler (Opus) — resolves contradictions, writes final profile
-    ↓
-output/groundtruth-report.md
+```bash
+claude --plugin-dir /path/to/groundtruth
 ```
 
-For existing repos, a drift checker (git pull + CHANGELOG diff) determines whether a full re-analysis is needed or the previous profile is still current.
+There are no runtime dependencies and no install script. The npm package exists for inspection and
+CI, not as an installer.
 
-## Agent Model Allocation
+## Output
 
-| Task | Model | Reason |
-|------|-------|--------|
-| Web search, drift check, spot-check | Haiku | High-volume, low-reasoning tasks |
-| Code analysis, verification, writing | Sonnet | Code comprehension + synthesis |
-| Contradiction resolution, final judgment | Opus | Meta-reasoning requires depth |
+| File | What it is |
+|---|---|
+| `groundtruth-report.md` | The readable profile, per repo plus comparison and methodology |
+| `report.provenance.json` | PROV-O record: every claim, its citations, the agents that adjudicated it, contradictions marked `invalidated` |
+| `llms.txt` | The same facts in the format agents expect to consume |
 
-## Resumability
+All three land under `.claude/groundtruth/output/` in your project. They contain no local paths, so
+you can commit one, share it, or drop it into a review.
 
-The pipeline writes its state to `tracking/PIPELINE_STATE.md` at every stage. If your session times out or hits a rate limit, running `/analyze` again picks up exactly where it stopped. Completed repos are never re-analyzed.
+State — clones, payloads, registry, run history — lives under `.claude/groundtruth/` and is
+git-ignored. Override the location with `GROUNDTRUTH_STATE_DIR`; clones move independently via
+`GROUNDTRUTH_CLONE_DIR`, because they must never sit inside a project tree.
 
-## Output is Self-Contained
+## Configuration
 
-`output/groundtruth-report.md` contains no local path references. You can drop it into any project, share it with a team, or publish it — no workspace context required.
-
-## Discovery Mode
-
-Running `/analyze` without URLs triggers discovery: the pipeline searches GitHub, HackerNews, and Reddit for new repos relevant to your current research domain, then surfaces candidates for your approval before analyzing them.
-
-## File Structure
-
+```bash
+# Model tiers: fast (discovery, triage, drift, spot-check), medium (analysis and verification),
+# strong (reconciliation). Defaults are aliases, which follow your provider and update over time.
+GROUNDTRUTH_MODEL_FAST=haiku
+GROUNDTRUTH_MODEL_MEDIUM=sonnet
+GROUNDTRUTH_MODEL_STRONG=opus
 ```
-groundtruth/
-├── SKILL.md
-├── README.md
-├── commands/
-│   └── analyze.md          ← /analyze orchestrator
-├── agents/
-│   ├── discovery-agent.md
-│   ├── triage-agent.md
-│   ├── drift-checker.md
-│   ├── online-spot-checker.md
-│   ├── analyzer-agent.md
-│   ├── technical-verifier.md
-│   ├── community-verifier.md
-│   ├── conflicts-verifier.md
-│   └── meta-reconciler.md
-├── tracking/
-│   ├── REGISTRY.md
-│   ├── PIPELINE_STATE.md
-│   └── WATCH_LIST.md
-├── sources/                ← cloned repos (git-ignored)
-└── output/
-    └── groundtruth-report.md
+
+Aliases rather than pinned IDs on purpose: `sonnet` resolves to different versions on the Anthropic
+API, AWS, Bedrock, and Foundry, so pinning one hands some users a model nobody chose. Pin a full ID
+if you want reproducibility more than currency — the run records what was resolved either way.
+
+## Development
+
+```bash
+npm run verify        # layout invariants, frontmatter lint, tests
+npm test              # tests only
+npm run verify:layout # the invariants that catch distribution mistakes
 ```
+
+`verify-layout.mjs` is the file that matters most. This project shipped for its entire first version
+with nine agents and one command that no harness could discover, because nothing checked layout. The
+invariants now cover that, plus: agent names that would resolve double-prefixed under plugin
+scoping, `SKILL.md` without frontmatter, a `package.json` `files` allowlist that would ship a plugin
+without its manifest, tools named in a prompt but not granted, and `Write` granted to any agent.
+
+## Multi-harness support
+
+The substance is harness-neutral: `core/` (path resolution, clone hardening, validation, injection
+detection, rendering) has no harness-specific syntax, and the agent prompts are plain markdown. The
+Claude Code plugin is one adapter, and the primary one.
+
+`AGENTS.md` at the root is read by a wide range of coding agents, so this repository is usable
+without Claude Code installed. `skills/analyze/SKILL.md` already follows the portable Agent Skills
+layout and is consumable by other hosts that read it.
+
+Subagents are Claude Code specific. A host without subagents gets the orchestrator and the
+deterministic core — clones, validation, injection refusal, rendering — which is where the security
+guarantees and the tier enforcement live. Porting the fan-out means writing an adapter, not changing
+the pipeline.
+
+## Related work, and how this differs
+
+- **[Repomix](https://github.com/yamadashy/repomix)**, **[Gitingest](https://github.com/coderamp-labs/gitingest)**,
+  **[DeepWiki](https://github.com/AsyncFuncAI/deepwiki-open)** — get a repository's *content* into a
+  model. Deterministic and fast. They extract; Groundtruth adjudicates.
+- **[Surface](https://github.com/Connorrmcd6/surface)** — keeps one repository's docs from going
+  stale via tree-sitter symbol fingerprints, enforced in CI. The better answer for that problem; our
+  drift check is a commit-SHA comparison in the same spirit.
+- **[sahanaa0420/groundtruth](https://github.com/sahanaa0420/groundtruth)** and
+  **[vnmoorthy/groundtruth](https://github.com/vnmoorthy/groundtruth)** — same name, different
+  problem. Both gate an agent's own completion claims; neither analyses third-party repositories.
+
+The projects named "groundtruth" are self-audit gates. This one clones third-party repositories and
+checks their claims against implementation code.
+
+## Honest limitations
+
+- **Benchmarks are not reproduced.** A project's own numbers stay `self-reported` unless an
+  independent source corroborates them.
+- **Live data decays.** Stars, commit dates, and issue counts are point-in-time; each carries an
+  observation date for that reason.
+- **Authenticated sources are invisible.** Private registries and paywalled advisories are
+  `unverifiable`.
+- **Agent judgement can still be wrong.** The validator proves a verdict cites a real file the agent
+  read. It cannot prove the agent read it for the right reason. That is why the provenance record is
+  published alongside the report.
+- **Coverage is not exhaustive.** Claim extraction is a model's judgement about what is checkable.
+  A repo that documents less gets a shorter list.
+- **`WebFetch` is not sandboxed.** The sandbox network allowlist covers sandboxed commands only.
 
 ## License
 

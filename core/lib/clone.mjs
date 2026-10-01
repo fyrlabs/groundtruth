@@ -65,7 +65,7 @@ export function inspectTree(root) {
       }
       if (entry.isDirectory()) {
         if (CONTROL_DIRS.has(entry.name)) {
-          findings.push({ kind: 'control-dir', path: relative(root, entry.name) });
+          findings.push({ kind: 'control-dir', path: relative(root, full) });
           continue;
         }
         if (SKIP_DIRS.has(entry.name)) continue;
@@ -73,7 +73,7 @@ export function inspectTree(root) {
         continue;
       }
       if (CONTROL_FILES.has(entry.name)) {
-        findings.push({ kind: 'control-file', path: relative(root, entry.name) });
+        findings.push({ kind: 'control-file', path: relative(root, full) });
         continue;
       }
       files += 1;

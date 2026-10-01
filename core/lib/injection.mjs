@@ -19,11 +19,15 @@
 const PATTERNS = [
   { kind: 'instruction-override', re: /\b(?:ignore|disregard|forget|override)\b[^.\n]{0,40}\b(?:previous|prior|above|earlier|all)\b[^.\n]{0,20}\b(?:instruction|prompt|rule|direction)s?\b/i },
   { kind: 'instruction-override', re: /\b(?:new|updated|revised)\s+(?:instruction|directive|rule)s?\s*:/i },
-  { kind: 'role-spoof', re: /^\s*(?:system|assistant|user|developer)\s*:\s*(?:ignore|you|now|new)/im },
+  // Any of the four role markers at line start, followed by instruction-shaped language. Anchoring
+  // the alternation too tightly missed "system: assistant: ...", which is the same attack.
+  { kind: 'role-spoof', re: /^\s*(?:system|assistant|user|developer)\s*:\s*\S/im },
   { kind: 'role-spoof', re: /<\|?(?:im_start|im_end|system|endoftext)\|?>/i },
   { kind: 'tool-output-spoof', re: /^\s*(?:tool_result|function_results?|observation)\s*[:=]\s*\[?\{/im },
   { kind: 'output-forgery', re: /^#{1,3}\s*(?:ANALYSIS_REPORT|TECHNICAL_VERIFICATION|COMMUNITY_VERIFICATION|CONFLICTS_VERIFICATION|ONLINE_SPOT_CHECK|DRIFT_REPORT|DISCOVERY_CANDIDATES|TRIAGE_RESULTS|RECONCILIATION_SUMMARY)\b/m },
-  { kind: 'verdict-injection', re: /(?:code-verified|self-reported|contradicted|unverifiable)\s*\|\s*(?:✅|⚠️|❌|🔍)|(?:✅|⚠️|❌|🔍)\s+(?:code-verified|self-reported|contradicted|unverifiable)/ },
+  // A verdict symbol or word appearing in a table row or an assertion, i.e. anywhere the repo is
+  // speaking as if it were the pipeline rather than as a subject being analysed.
+  { kind: 'verdict-injection', re: /(?:code-verified|self-reported|contradicted|unverifiable)\s*\|\s*(?:✅|⚠️|❌|🔍)|(?:✅|⚠️|❌|🔍)\s+(?:code-verified|self-reported|contradicted|unverifiable)|\ball\s+claims\b[^\n]{0,40}\bcode-verified\b/i },
   { kind: 'exfiltration', re: /\b(?:curl|wget|fetch)\b[^\n]{0,80}\b(?:cat|id_rsa|\.env|credentials|\.aws|\.ssh)/i },
   { kind: 'shell-pipe', re: /(?:curl|wget)\s+[^\n|]{0,200}\|\s*(?:ba)?sh/i },
   { kind: 'tool-approval-request', re: /\b(?:allowed-tools|allowed_tools)\s*:\s*[^\n]*(?:Bash|Write|Edit)/i },
@@ -42,34 +46,35 @@ export function scan(text, { path = '' } = {}) {
 }
 
 // Replace detected spans rather than deleting the file, so the agent still sees that the file had
-// content and can reason about the repo — it just cannot be handed a working instruction.
+// content and can reason about the repo — it just cannot be handed a working instruction or verdict.
+//
+// Detection alone is not neutralisation. A span that is reported but left intact is still a span an
+// agent matching on our own output shape can copy, so every detected span is replaced. It is
+// *described* rather than reproduced: escaping or case-swapping leaves the text readable to a model,
+// which is enough for an instruction to be reassembled and obeyed, whereas a length-and-kind
+// description carries the audit signal and cannot be reassembled at all.
 export function scrub(text, { path = '' } = {}) {
   if (typeof text !== 'string' || !text) return { text: text ?? '', detections: [] };
   const detections = [];
   let out = text;
 
   for (const { kind, re } of PATTERNS) {
-    if (kind === 'output-forgery' || kind === 'verdict-injection') continue;
-    out = out.replace(new RegExp(re.source, re.flags.includes('g') ? re.flags : `${re.flags}g`), (match) => {
-      detections.push({ file: path, kind, snippet: match.slice(0, 120) });
-      // Break the pattern rather than merely relocating it: bracketing every character preserves the
-      // original text and lets an instruction-matching model reassemble it, which is why the earlier
-      // version of this function left "Ignore all previous instructions" fully intact.
-      // Describe the span rather than reproduce it. Case-swapping or escaping leaves the text
-      // readable to a model, which is enough for an instruction to be reassembled and obeyed; a
-      // length-and-kind description carries the audit signal and cannot be reassembled at all.
-      const line = text.slice(0, text.indexOf(match)).split('\n').length;
-      return `[groundtruth: quarantined ${kind}, ${match.length} chars at line ${line} — not reproduced]`;
-    });
-  }
-
-  // Flag forged output blocks without destroying the surrounding documentation.
-  for (const { kind, re } of PATTERNS) {
-    if (kind !== 'output-forgery' && kind !== 'verdict-injection') continue;
-    if (re.test(text)) detections.push({ file: path, kind, snippet: kind });
+    const global = new RegExp(re.source, re.flags.includes('g') ? re.flags : `${re.flags}g`);
+    let hit = re.exec(text);
+    if (!hit) continue;
+    detections.push({ file: path, kind, snippet: hit[0].slice(0, 120) });
+    out = out.replace(global, () => quarantine(kind, hit[0].index, text));
+    // Re-check: replacing one span can expose another underneath it.
+    hit = re.exec(out);
+    if (hit) detections.push({ file: path, kind, snippet: hit[0].slice(0, 120) });
   }
 
   return { text: out, detections };
+}
+
+function quarantine(kind, index, source) {
+  const line = source.slice(0, index).split('\n').length;
+  return `[groundtruth: quarantined ${kind} at line ${line} — not reproduced]`;
 }
 
 export { PATTERNS };

@@ -36,16 +36,15 @@
     "scripts/",
     "core/",
     "config/",
-    "test/",
     "docs/",
     "AGENTS.md",
     "CLAUDE.md",
     "SECURITY.md",
     "CONTRIBUTING.md",
     "CHANGELOG.md",
-    "SKILL.md",
     "README.md",
-    "LICENSE"
+    "LICENSE",
+    "test/fixtures/"
   ],
   "scripts": {
     "verify": "node scripts/verify-layout.mjs && node scripts/lint-frontmatter.mjs && node scripts/run-tests.mjs",
@@ -56,6 +55,10 @@
     "test:state": "node scripts/run-tests.mjs state",
     "test:render": "node scripts/run-tests.mjs render",
     "pack:check": "node scripts/check-pack.mjs",
-    "plugin:validate": "claude plugin validate ."
+    "plugin:validate": "claude plugin validate .",
+    "evaluate": "node scripts/evaluate.mjs",
+    "check:guards": "node scripts/install-guardrails.mjs --print",
+    "models": "node scripts/resolve-models.mjs",
+    "models:write": "node scripts/resolve-models.mjs --write"
   }
 }

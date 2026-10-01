@@ -1,0 +1,110 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  verify:
+    name: Verify
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+
+      - name: Install
+        run: npm install --ignore-scripts
+
+      # The package ships zero runtime dependencies, so there is nothing to install and nothing to
+      # audit. --ignore-scripts is belt-and-braces: an install script would be a supply-chain finding
+      # in this project specifically.
+      - name: Confirm zero runtime dependencies
+        run: |
+          COUNT=$(node -e "const p=require('./package.json'); console.log(Object.keys({...p.dependencies,...p.peerDependencies,...p.optionalDependencies}).length)")
+          echo "runtime dependencies: $COUNT"
+          if [ "$COUNT" != "0" ]; then
+            echo "::error::Groundtruth must ship zero runtime dependencies (SECURITY.md). Add a decision entry before adding one."
+            exit 1
+          fi
+
+      # The gate. Layout invariants first, because a component that nothing can reach passes every
+      # behavioural test in the repo.
+      - name: Layout and packaging invariants
+        run: npm run verify:layout
+
+      - name: Frontmatter lint
+        run: npm run verify:frontmatter
+
+      - name: Tests
+        run: npm test
+
+  package:
+    name: Packaging
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+
+      # A `files` allowlist silently omits whole directories, and the plugin manifest, hooks,
+      # and resolver are exactly the kind of thing that gets left out. The published tarball has to
+      # actually contain what the manifest references.
+      - name: Published tarball contains every directory the plugin needs
+        run: npm run pack:check
+
+      - name: Plugin manifest is valid
+        run: claude plugin validate .
+
+      - name: Version is in sync
+        run: node -e "
+          const pkg = require('./package.json');
+          const plugin = require('./.claude-plugin/plugin.json');
+          if (pkg.version !== plugin.version) {
+            console.error('::error::package.json ' + pkg.version + ' != plugin.json ' + plugin.version);
+            process.exit(1);
+          }
+        "
+
+  security:
+    name: Security guards
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+
+      # Run separately from the main suite so a guard regression is legible as a security failure
+      # rather than buried in a test count.
+      - name: Injection and guard suites
+        run: npm run test:injection
+
+      - name: No agent may hold Write or Edit
+        run: |
+          FOUND=$(grep -l '^tools:.*\(Write\|Edit\)' agents/*.md || true)
+          if [ -n "$FOUND" ]; then
+            echo "::error::These agents grant Write or Edit, which reintroduces self-escalation:"
+            echo "$FOUND"
+            exit 1
+          fi
+          echo "no agent grants Write or Edit"
+
+      - name: Guardrails installer does not clobber existing settings
+        run: |
+          node scripts/install-guardrails.mjs --print > /dev/null
+          echo "guardrails script runs without writing"
