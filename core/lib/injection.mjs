@@ -52,9 +52,14 @@ export function scrub(text, { path = '' } = {}) {
     if (kind === 'output-forgery' || kind === 'verdict-injection') continue;
     out = out.replace(new RegExp(re.source, re.flags.includes('g') ? re.flags : `${re.flags}g`), (match) => {
       detections.push({ file: path, kind, snippet: match.slice(0, 120) });
-      return match
-        .replace(/[^\u0000-\u007F]/g, (ch) => `[${ch.codePointAt(0).toString(16)}]`)
-        .slice(0, 120);
+      // Break the pattern rather than merely relocating it: bracketing every character preserves the
+      // original text and lets an instruction-matching model reassemble it, which is why the earlier
+      // version of this function left "Ignore all previous instructions" fully intact.
+      // Describe the span rather than reproduce it. Case-swapping or escaping leaves the text
+      // readable to a model, which is enough for an instruction to be reassembled and obeyed; a
+      // length-and-kind description carries the audit signal and cannot be reassembled at all.
+      const line = text.slice(0, text.indexOf(match)).split('\n').length;
+      return `[groundtruth: quarantined ${kind}, ${match.length} chars at line ${line} — not reproduced]`;
     });
   }
 

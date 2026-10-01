@@ -184,9 +184,13 @@ check('the orchestrator reads its arguments', () => {
 check('no shipped file contains a resolved local path', () => {
   const bad = [];
   // Match resolved paths with a username segment, ignoring inline code spans, so the security
-  // rules that *forbid* absolute paths are not flagged as containing one.
+  // rules that *forbid* absolute paths are not flagged as containing one. Tests are excluded: they
+  // deliberately contain path fixtures, which is the only way to exercise the guards at all.
   const re = /(?:^|[\s"'`(])(?:\/Users\/|\/home\/)[A-Za-z0-9._-]+/;
-  for (const file of shippedFiles().filter((f) => /\.(md|json|mjs|js)$/.test(f))) {
+  const shipped = shippedFiles()
+    .filter((f) => /\.(md|json|mjs|js)$/.test(f))
+    .filter((f) => !f.includes('/test/'));
+  for (const file of shipped) {
     const text = readFileSync(file, 'utf8');
     for (const line of text.split('\n')) {
       const bare = line.replace(/`[^`]*`/g, '');
