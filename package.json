@@ -1,37 +1,61 @@
 {
-  "name": "@sathvikc/groundtruth",
-  "version": "0.1.0",
-  "description": "Verified research documentation for GitHub repos. Multi-agent Claude Code skill that reads actual code, not just READMEs.",
+  "name": "@fyrlabs/groundtruth",
+  "version": "0.2.0",
+  "description": "Code-grounded research profiles for GitHub repos. Clones each repo and adjudicates its claims against the implementation.",
   "keywords": [
     "claude-code",
     "claude",
     "ai",
     "research",
     "verification",
+    "provenance",
     "agents",
     "mcp"
   ],
-  "author": "sathvikc",
+  "author": {
+    "name": "fyrlabs"
+  },
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/sathvikc/ground-truth"
+    "url": "git+https://github.com/fyrlabs/groundtruth.git"
   },
-  "homepage": "https://github.com/sathvikc/ground-truth#readme",
-  "bin": {
-    "groundtruth": "./bin/install.js"
+  "homepage": "https://github.com/fyrlabs/groundtruth#readme",
+  "bugs": {
+    "url": "https://github.com/fyrlabs/groundtruth/issues"
+  },
+  "type": "module",
+  "engines": {
+    "node": ">=20.11"
   },
   "files": [
-    "bin/",
+    ".claude-plugin/",
     "agents/",
-    "commands/",
-    "tracking/",
-    "output/groundtruth-report.md",
+    "skills/",
+    "hooks/",
+    "scripts/",
+    "core/",
+    "config/",
+    "test/",
+    "docs/",
+    "AGENTS.md",
+    "CLAUDE.md",
+    "SECURITY.md",
+    "CONTRIBUTING.md",
+    "CHANGELOG.md",
     "SKILL.md",
     "README.md",
     "LICENSE"
   ],
-  "engines": {
-    "node": ">=18"
+  "scripts": {
+    "verify": "node scripts/verify-layout.mjs && node scripts/lint-frontmatter.mjs && node scripts/run-tests.mjs",
+    "verify:layout": "node scripts/verify-layout.mjs",
+    "verify:frontmatter": "node scripts/lint-frontmatter.mjs",
+    "test": "node scripts/run-tests.mjs",
+    "test:injection": "node scripts/run-tests.mjs injection",
+    "test:state": "node scripts/run-tests.mjs state",
+    "test:render": "node scripts/run-tests.mjs render",
+    "pack:check": "node scripts/check-pack.mjs",
+    "plugin:validate": "claude plugin validate ."
   }
 }

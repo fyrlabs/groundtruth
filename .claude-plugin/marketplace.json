@@ -1,0 +1,29 @@
+{
+  "name": "fyrlabs",
+  "owner": {
+    "name": "fyrlabs",
+    "url": "https://github.com/fyrlabs"
+  },
+  "metadata": {
+    "description": "fyrlabs plugins",
+    "version": "1.0.0"
+  },
+  "plugins": [
+    {
+      "name": "groundtruth",
+      "source": "./",
+      "description": "Code-grounded research profiles for GitHub repos. Clones each repo and adjudicates its claims against the implementation.",
+      "author": {
+        "name": "fyrlabs"
+      },
+      "homepage": "https://github.com/fyrlabs/groundtruth",
+      "license": "MIT",
+      "keywords": [
+        "research",
+        "verification",
+        "provenance",
+        "code-analysis"
+      ]
+    }
+  ]
+}

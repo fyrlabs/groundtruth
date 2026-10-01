@@ -1,0 +1,44 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "groundtruth://claim",
+  "title": "Claim",
+  "description": "One verifiable claim extracted from a repo's own documentation. A claim is never a verdict; the verdict lives on the verification that references it.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["id", "text", "quote", "source", "type"],
+  "properties": {
+    "id": {
+      "type": "string",
+      "pattern": "^c[0-9]{1,3}$",
+      "description": "Stable claim id, c1..c999. Assigned by the analyzer."
+    },
+    "text": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 500
+    },
+    "quote": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 1000,
+      "description": "Exact text as it appears in the source. Must be a substring of the cited file."
+    },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "line"],
+      "properties": {
+        "path": { "type": "string", "minLength": 1, "maxLength": 400 },
+        "line": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "type": {
+      "enum": ["benchmark", "performance", "count", "compatibility", "attribution", "license", "maintenance", "feature", "security"]
+    },
+    "regression_test": {
+      "type": ["string", "null"],
+      "maxLength": 400,
+      "description": "Path to a test that would fail if the claim stopped being true. Null when none exists."
+    }
+  }
+}

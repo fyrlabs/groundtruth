@@ -1,2 +1,11 @@
-sources/*/
-!sources/.gitkeep
+# Cloned repos and run state are created at run time, never committed.
+sources/
+.claude/groundtruth/
+.groundtruth/
+output/
+tracking/
+injections.jsonl
+
+node_modules/
+*.log
+.DS_Store

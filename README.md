@@ -25,7 +25,7 @@ A research document (`output/groundtruth-report.md`) where every claim is tagged
 
 ```bash
 # Install as a Claude Code skill
-npx @sathvikc/groundtruth
+npx @fyrlabs/groundtruth
 
 # Analyze repos
 /analyze https://github.com/org/repo1 https://github.com/org/repo2

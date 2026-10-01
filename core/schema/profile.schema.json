@@ -1,0 +1,188 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "groundtruth://profile",
+  "title": "Profile",
+  "description": "A repo's reconciled research profile. This is the authoritative machine-readable artifact; the markdown report is rendered from it. Every prose judgment lives in `prose` so the renderer never has to invent it.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "repo", "analyzed_at", "tiers", "prose", "claims", "coverage"],
+  "properties": {
+    "schema_version": { "type": "integer", "minimum": 1 },
+    "repo": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["key", "owner", "name", "url"],
+      "properties": {
+        "key": { "type": "string", "pattern": "^[a-z0-9.-]+\\.[a-z0-9._-]+$" },
+        "owner": { "type": "string", "minLength": 1 },
+        "name": { "type": "string", "minLength": 1 },
+        "url": { "type": "string", "pattern": "^https://github\\.com/" },
+        "ref": { "type": ["string", "null"], "description": "Exact ref analysed: tag, branch, or SHA." },
+        "sha": { "type": ["string", "null"], "pattern": "^[0-9a-f]{7,40}$" }
+      }
+    },
+    "analyzed_at": { "type": "string", "format": "date-time" },
+    "analyzer_version": { "type": "string", "maxLength": 40 },
+
+    "health": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "status": { "enum": ["active", "low-activity", "potentially-abandoned", "archived", "deprecated", "replaced"] },
+        "last_commit": { "type": ["string", "null"], "format": "date" },
+        "stars": { "type": ["integer", "null"], "minimum": 0 },
+        "stars_observed_at": { "type": ["string", "null"], "format": "date" },
+        "open_issues": { "type": ["integer", "null"], "minimum": 0 },
+        "replaced_by": { "type": ["string", "null"] },
+        "basis": { "type": "string", "maxLength": 500 }
+      }
+    },
+
+    "license": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["tier"],
+      "properties": {
+        "claimed": { "type": ["string", "null"], "maxLength": 100 },
+        "actual": { "type": ["string", "null"], "maxLength": 100 },
+        "oss_compatible": { "enum": ["yes", "no", "source-available-only", "unknown"] },
+        "tier": { "enum": ["code-verified", "self-reported", "contradicted", "unverifiable"] },
+        "note": { "type": "string", "maxLength": 500 }
+      }
+    },
+
+    "tech_stack": {
+      "type": "array",
+      "maxItems": 40,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["component", "detail", "tier"],
+        "properties": {
+          "component": { "type": "string", "maxLength": 60 },
+          "detail": { "type": "string", "maxLength": 200 },
+          "tier": { "enum": ["code-verified", "self-reported", "contradicted", "unverifiable"] }
+        }
+      }
+    },
+
+    "platform_support": {
+      "type": "array",
+      "maxItems": 20,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["platform", "level", "tier"],
+        "properties": {
+          "platform": { "type": "string", "maxLength": 60 },
+          "claimed": { "type": "boolean" },
+          "level": { "enum": ["full", "partial", "instructions-only", "none"] },
+          "tier": { "enum": ["code-verified", "self-reported", "contradicted", "unverifiable"] },
+          "evidence": { "type": "string", "maxLength": 300 }
+        }
+      }
+    },
+
+    "conflicts": {
+      "type": "array",
+      "maxItems": 20,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["other_repo", "type", "severity", "detail"],
+        "properties": {
+          "other_repo": { "type": "string", "maxLength": 120 },
+          "type": { "enum": ["namespace", "workflow-governance", "file-overlap", "dependency", "install-path"] },
+          "severity": { "enum": ["high", "medium", "low"] },
+          "detail": { "type": "string", "maxLength": 400 }
+        }
+      }
+    },
+
+    "claims": {
+      "type": "array",
+      "maxItems": 200,
+      "description": "Hard cap. A repo README must not be able to flood the schema.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["claim", "tier", "evidence", "verdicts", "downgrade"],
+        "properties": {
+          "claim": { "type": "string", "minLength": 1, "maxLength": 500 },
+          "type": { "type": "string", "maxLength": 40 },
+          "tier": { "enum": ["code-verified", "self-reported", "contradicted", "unverifiable"] },
+          "evidence": { "type": "string", "minLength": 1, "maxLength": 800 },
+          "cited_files": { "type": "array", "maxItems": 8, "items": { "type": "string", "maxLength": 400 } },
+          "downgrade": { "type": "array", "items": { "enum": ["risk-of-bias", "imprecision", "inconsistency", "indirectness", "publication-bias"] } },
+          "correlated": {
+            "type": "boolean",
+            "description": "True when every verdict on this claim cited the same file. Agreement that carries no independent weight."
+          },
+          "verdicts": {
+            "type": "array",
+            "maxItems": 8,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["agent", "tier", "cited_files"],
+              "properties": {
+                "agent": { "type": "string", "maxLength": 60 },
+                "tier": { "enum": ["code-verified", "self-reported", "contradicted", "unverifiable"] },
+                "cited_files": { "type": "array", "maxItems": 8, "items": { "type": "string", "maxLength": 400 } },
+                "summary": { "type": "string", "maxLength": 600 }
+              }
+            }
+          }
+        }
+      }
+    },
+
+    "prose": {
+      "type": "object",
+      "description": "LLM-authored judgments. The renderer emits these verbatim and cannot invent them.",
+      "additionalProperties": false,
+      "required": ["what_it_does", "how_it_works", "verdict", "analyst_notes"],
+      "properties": {
+        "what_it_does": { "type": "string", "minLength": 20, "maxLength": 900 },
+        "how_it_works": { "type": "string", "minLength": 20, "maxLength": 1400 },
+        "verdict": { "type": "string", "minLength": 20, "maxLength": 900 },
+        "analyst_notes": { "type": "string", "maxLength": 1400 }
+      }
+    },
+
+    "coverage": {
+      "type": "object",
+      "description": "What no verifier could adjudicate. Surfacing this is what stops untested claims from vanishing.",
+      "additionalProperties": false,
+      "required": ["claims_total", "verified", "self_reported", "contradicted", "unverifiable", "uncovered"],
+      "properties": {
+        "claims_total": { "type": "integer", "minimum": 0 },
+        "verified": { "type": "integer", "minimum": 0 },
+        "self_reported": { "type": "integer", "minimum": 0 },
+        "contradicted": { "type": "integer", "minimum": 0 },
+        "unverifiable": { "type": "integer", "minimum": 0 },
+        "uncovered": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Claims that no verifier could reach at all. Non-zero is normal and honest."
+        },
+        "uncovered_notes": { "type": "array", "maxItems": 20, "items": { "type": "string", "maxLength": 300 } }
+      }
+    },
+
+    "injections_detected": {
+      "type": "array",
+      "maxItems": 50,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["file", "kind"],
+        "properties": {
+          "file": { "type": "string", "maxLength": 400 },
+          "kind": { "type": "string", "maxLength": 60 },
+          "snippet": { "type": "string", "maxLength": 200 }
+        }
+      }
+    }
+  }
+}
