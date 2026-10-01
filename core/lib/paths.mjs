@@ -16,11 +16,14 @@ export const PLUGIN_ROOT = process.env.CLAUDE_PLUGIN_ROOT
 
 const SKILL_DIRS = ['.claude/groundtruth', '.groundtruth'];
 
-// Repo identity is owner__repo. A bare repo name would let acme/tool and other/tool collide.
+// GitHub only for now. Other forges and non-repo targets are rejected loudly rather than
+// half-parsed: a mis-parsed URL becomes a wrong sources/ directory and a profile attributed to
+// the wrong project, which is worse than a clear error.
 export function repoKey(url) {
-  const m = /^https?:\/\/[^/]+\/([^/]+)\/([^/#?]+?)(?:\.git)?\/?$/.exec(String(url).trim());
+  const m = /^https:\/\/github\.com\/([\w.-]+)\/([\w.-]+?)(?:\.git)?\/?$/.exec(String(url).trim());
   if (!m) return null;
-  return `${m[1].toLowerCase()}.${m[2].toLowerCase()}`.replace(/[^a-z0-9._-]/g, '-');
+  const key = `${m[1].toLowerCase()}.${m[2].toLowerCase()}`.replace(/[^a-z0-9._-]/g, '-');
+  return key.includes('.') ? key : null;
 }
 
 export function repoParts(key) {

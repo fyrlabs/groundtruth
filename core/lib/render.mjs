@@ -30,15 +30,17 @@ const LEVEL_LABEL = {
   none: 'None',
 };
 
+// Repo-controlled strings reach the report, and the report is designed to be dropped into a project
+// where a future agent will read it. Strip control and bidi characters so a repo cannot hide text
+// from a human reviewer, flatten newlines so a claim cannot forge table rows, and escape pipes.
+const HIDDEN = /[\u200B-\u200F\u2028\u2029\u202A-\u202E\u2060-\u2064\uFEFF]/g;
+
+function clean(text) {
+  return String(text ?? '').replace(HIDDEN, '');
+}
+
 function esc(text) {
-  // Repo-controlled strings reach the report, and the report is designed to be dropped into a
-  // project where it will be re-read. Strip control and bidi characters so a repo cannot hide text
-  // from a human reviewer or forge table structure.
-  return String(text ?? '')
-    .replace(/[\u200B-\u200F\u2028\u2029\u202A-\u202E\u2060-\u2064\uFEFF]/g, '')
-    .replace(/\|/g, '\\|')
-    .replace(/\r?\n/g, ' ')
-    .trim();
+  return clean(text).replace(/\|/g, '\\|').replace(/\r?\n/g, ' ').trim();
 }
 
 function mdCell(text) {
@@ -56,18 +58,19 @@ function renderProfile(profile) {
 
   const status = health.status ? `**${esc(health.status)}**${health.replaced_by ? ` — replaced by \`${esc(health.replaced_by)}\`` : ''}` : '—';
   const ref = repo.ref ? ` @ \`${esc(repo.ref)}\`` : '';
-  out.push(`${status} · analyzed ${esc(profile.analyzed_at?.slice(0, 10))}${ref} · license **${esc(license.actual || 'unknown')}** ${TIER_ICON[license.tier] || ''}`);
+  const sha = repo.sha ? ` (\`${esc(repo.sha.slice(0, 12))}\`)` : '';
+  out.push(`${status} · analyzed ${esc(profile.analyzed_at?.slice(0, 10))}${ref}${sha} · license **${esc(license.actual || 'unknown')}** ${TIER_ICON[license.tier] || ''}`);
   if (health.stars != null) out.push(`Stars: ${health.stars.toLocaleString()} (observed ${esc(health.stars_observed_at || 'unknown')})`);
   out.push('');
 
   out.push(`#### What it does`);
   out.push('');
-  out.push(esc(profile.prose.what_it_does));
+  out.push(clean(profile.prose.what_it_does));
   out.push('');
 
   out.push(`#### How it works`);
   out.push('');
-  out.push(esc(profile.prose.how_it_works));
+  out.push(clean(profile.prose.how_it_works));
   out.push('');
 
   if (profile.tech_stack?.length) {
@@ -130,13 +133,13 @@ function renderProfile(profile) {
 
   out.push('#### Verdict');
   out.push('');
-  out.push(esc(profile.prose.verdict));
+  out.push(clean(profile.prose.verdict));
   out.push('');
 
   if (profile.prose.analyst_notes) {
     out.push('#### Analyst notes');
     out.push('');
-    out.push(esc(profile.prose.analyst_notes));
+    out.push(clean(profile.prose.analyst_notes));
     out.push('');
   }
 
@@ -326,6 +329,9 @@ export function buildProvenance(profiles) {
       wasAssociatedWith: { agent: v.agent, tier: v.tier, summary: v.summary || '' },
     })))),
     agents: [...new Set(profiles.flatMap((p) => p.claims.flatMap((c) => (c.verdicts || []).map((v) => v.agent))))].map((name) => ({ id: name, type: 'Agent' })),
+  invalidated: profiles.flatMap((p) => p.claims.map((c, i) => c.tier === 'contradicted'
+    ? { id: `${p.repo.key}/claim/${i}`, type: 'Invalidation', reason: c.evidence }
+    : null).filter(Boolean)),
     entities_note: 'File entities are addressed as <repo>/file/<clone-relative path>; resolve against the recorded commit SHA.',
     wasRevisionOf: profiles.map((p) => ({
       subject: p.repo.key,
@@ -353,4 +359,4 @@ function buildLlmsTxt(profiles) {
   return lines.join('\n');
 }
 
-export { renderProfile, reportPath };
+export { renderProfile, reportPath, buildLlmsTxt };

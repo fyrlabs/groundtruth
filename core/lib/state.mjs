@@ -76,23 +76,43 @@ export function updateState(fn) {
   return saveState(next);
 }
 
-// Runs are numbered by reading what exists. An LLM incrementing a counter produces duplicate ids
-// under parallel runs; the filesystem cannot.
+// Runs are numbered from what exists on disk — archived runs plus the active one. An LLM
+// incrementing a counter produces duplicate ids under parallel runs; the filesystem cannot.
 function nextRunId() {
   const day = new Date().toISOString().slice(0, 10);
   const prefix = `groundtruth-${day}-`;
   let max = 0;
-  for (const name of existsSync(paths.runsDir()) ? readdirSync(paths.runsDir()) : []) {
-    if (!name.startsWith(prefix)) continue;
-    const n = Number.parseInt(name.slice(prefix.length), 10);
+  const consider = (runId) => {
+    if (typeof runId !== 'string' || !runId.startsWith(prefix)) return;
+    const n = Number.parseInt(runId.slice(prefix.length), 10);
     if (Number.isFinite(n) && n > max) max = n;
+  };
+
+  for (const name of existsSync(paths.runsDir()) ? readdirSync(paths.runsDir()) : []) {
+    if (name === 'active') {
+      // The active run's id lives inside its state file, not its directory name.
+      consider(readJson(join(paths.runsDir(), 'active', 'state.json'), {})?.run_id);
+    } else {
+      consider(name);
+    }
   }
   return `${prefix}${String(max + 1).padStart(3, '0')}`;
 }
 
 export function startRun({ targets = [], newRepos = [], knownRepos = [], discoveryRan = false } = {}) {
   const runId = nextRunId();
-  const dir = join(paths.runsDir(), runId);
+  // The active run lives at a stable path so every reader (including `state.mjs show`) finds it
+  // without first resolving a pointer. Prior runs are archived by id rather than deleted, so an
+  // interrupted run's state is still recoverable after the next run starts.
+  mkdirSync(paths.runsDir(), { recursive: true });
+  const previous = activeRunDir();
+  const previousState = previous ? readJson(join(previous, 'state.json'), null) : null;
+  if (previous && previousState?.run_id) {
+    const archive = join(paths.runsDir(), previousState.run_id);
+    if (existsSync(archive)) rmSync(archive, { recursive: true, force: true });
+    renameSync(previous, archive);
+  }
+  const dir = join(paths.runsDir(), 'active');
   mkdirSync(dir, { recursive: true });
   writeJson(join(dir, 'state.json'), {
     ...emptyState(),
@@ -108,9 +128,6 @@ export function startRun({ targets = [], newRepos = [], knownRepos = [], discove
     next_step: 'Clone new repos, then drift-check known repos.',
   });
 
-  const prev = activeRunDir();
-  if (prev && prev !== dir) rmSync(prev, { recursive: true, force: true });
-  writeJson(join(paths.runsDir(), 'active.json'), { run_id: runId, dir });
   return { ...emptyState(), run_id: runId, status: 'STARTED', targets, new_repos: newRepos, known_repos: knownRepos };
 }
 
