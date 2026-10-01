@@ -207,32 +207,58 @@ function reportHeader(state, profiles) {
   ].join('\n');
 }
 
-function renderComparison(profiles) {
-  const rows = profiles.map((p) => {
-    const cov = p.coverage || {};
-    const total = cov.claims_total ?? 0;
-    const ratio = total ? Math.round(((cov.verified ?? 0) / total) * 100) : 0;
-    return {
-      repo: `${p.repo.owner}/${p.repo.name}`,
-      license: p.license?.actual || 'unknown',
-      status: p.health?.status || 'unknown',
-      claims: total,
-      verified: cov.verified ?? 0,
-      pct: ratio,
-      uncovered: cov.uncovered ?? 0,
-    };
-  });
-  return [
+// The comparison and summary come from run.json, which scripts/synthesize.mjs computes from state
+// with no model involved. Deriving them here instead would duplicate that logic and reintroduce a
+// second writer over the report's cross-repo sections.
+function renderComparison(synthesis) {
+  const rows = synthesis?.repos || [];
+  const watchlist = synthesis?.watchlist || [];
+
+  const lines = [
+    '## Executive summary',
+    '',
+    synthesis?.executive_summary || '_Not synthesized yet — run `node scripts/synthesize.mjs`._',
+    '',
+    '---',
+    '',
     '## Comparative analysis',
     '',
-    '| Repo | Status | License | Claims | Verified | Uncovered |',
-    '|---|---|---|---|---|---|',
-    ...rows.map((r) => `| ${mdCell(r.repo)} | ${mdCell(r.status)} | ${mdCell(r.license)} | ${r.claims} | ${r.verified} (${r.pct}%) | ${r.uncovered} |`),
-    '',
-    'Verification rate is claims-verified ÷ claims-extracted. A low rate is not a defect in the repo —',
-    'it usually means the project documents less than it implies, or its claims need live execution.',
-    '',
-  ].join('\n');
+  ];
+
+  if (!rows.length) {
+    lines.push('_No repositories profiled yet._', '');
+  } else {
+    lines.push(
+      '| Repo | Status | License | OSS | Claims | Verified | Contradicted | Uncovered |',
+      '|---|---|---|---|---|---|---|---|',
+    );
+    for (const r of rows) {
+      lines.push(`| ${mdCell(r.name)} | ${mdCell(r.status)} | ${mdCell(r.license)} | ${mdCell(r.oss_compatible)} | ${r.claims} | ${r.verified} (${r.verification_rate}%) | ${r.contradicted} | ${r.uncovered} |`);
+    }
+    lines.push(
+      '',
+      'Verification rate is claims-verified ÷ claims-extracted. A low rate is not a defect in the repo —',
+      'it usually means the project documents less than it implies, or its claims need live execution.',
+      '',
+    );
+  }
+
+  if (watchlist.length) {
+    lines.push('## Watch list', '', 'Promising, not yet ready. Re-checked on every run.', '', '| Repo | Why waiting | Check again |', '|---|---|---|');
+    for (const w of watchlist) {
+      lines.push(`| ${mdCell(w.url)} | ${mdCell(w.reason)} | ${mdCell(w.check_again)} |`);
+    }
+    lines.push('');
+  }
+
+  const dead = rows.filter((r) => /deprecated|archived|replaced|abandoned/.test(r.status));
+  if (dead.length) {
+    lines.push('## Deprecated or unmaintained', '');
+    for (const r of dead) lines.push(`- **${mdCell(r.name)}** — ${mdCell(r.status)}. ${mdCell(r.summary)}`);
+    lines.push('');
+  }
+
+  return lines.join('\n');
 }
 
 function renderMethodology(profiles) {
@@ -274,6 +300,7 @@ export function listProfiles() {
 
 export function renderReport({ keys = null } = {}) {
   const state = readJson(join(paths.runsDir(), 'active', 'state.json'), { run_id: null });
+  const synthesis = readJson(join(paths.stateRoot(), 'run.json'), null);
   let profiles = listProfiles();
   if (keys?.length) profiles = profiles.filter((p) => keys.includes(p.repo.key));
 
@@ -290,7 +317,7 @@ export function renderReport({ keys = null } = {}) {
   const body = [
     reportHeader(state, profiles),
     ...profiles.map((p) => `${renderProfile(p)}\n\n---\n\n`),
-    renderComparison(profiles),
+    renderComparison(synthesis),
     renderMethodology(profiles),
     '---',
     '',

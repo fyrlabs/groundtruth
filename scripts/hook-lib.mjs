@@ -66,9 +66,11 @@ export function toolInputPath(input = {}) {
   return input.file_path || input.path || input.notebook_path || input.pattern || '';
 }
 
-// The clone root. Content under it is untrusted by definition.
+// The clone root. Content under it is untrusted by definition. Must agree with core/lib/paths.mjs —
+// a guard that watches a different directory than the one clone.mjs writes to protects nothing.
 export function cloneRoot() {
-  return process.env.GROUNDTRUTH_CLONE_DIR || join(process.env.HOME || '', '.cache', 'groundtruth', 'sources');
+  if (process.env.GROUNDTRUTH_CLONE_DIR) return resolve(process.env.GROUNDTRUTH_CLONE_DIR);
+  return join(process.env.HOME || '', '.cache', 'groundtruth', 'sources');
 }
 
 export function stateRoot() {

@@ -51,16 +51,19 @@ function withClaim(profile, claim, { verified = 0, selfReported = 0 } = {}) {
 // state at a temp dir keeps each test hermetic; the returned restore undoes it.
 function withClone(files, fn) {
   const root = mkdtempSync(join(tmpdir(), 'gt-state-'));
-  const previous = process.env.GROUNDTRUTH_STATE_DIR;
+  const previous = { state: process.env.GROUNDTRUTH_STATE_DIR, clones: process.env.GROUNDTRUTH_CLONE_DIR };
   process.env.GROUNDTRUTH_STATE_DIR = root;
-  const sources = join(root, 'sources', 'acme.tool');
+  process.env.GROUNDTRUTH_CLONE_DIR = join(root, 'clones');
+  const sources = join(root, 'clones', 'acme.tool');
   mkdirSync(sources, { recursive: true });
   for (const [name, body] of Object.entries(files)) writeFileSync(join(sources, name), body);
   try {
     return fn();
   } finally {
-    if (previous === undefined) delete process.env.GROUNDTRUTH_STATE_DIR;
-    else process.env.GROUNDTRUTH_STATE_DIR = previous;
+    for (const key of ['GROUNDTRUTH_STATE_DIR', 'GROUNDTRUTH_CLONE_DIR']) {
+      if (previous[key] === undefined) delete process.env[key];
+      else process.env[key] = previous[key];
+    }
     rmSync(root, { recursive: true, force: true });
   }
 }

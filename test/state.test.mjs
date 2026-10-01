@@ -4,7 +4,7 @@ import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSy
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { repoKey, repoParts, stateRoot, ensureStateRoot } from '../core/lib/paths.mjs';
+import { repoKey, repoParts, stateRoot, cloneRoot, ensureStateRoot, paths } from '../core/lib/paths.mjs';
 import { loadState, saveState, startRun, writeJson, readJson, setRepoStage, readPayload, repoProgress, writePayload, emptyState } from '../core/lib/state.mjs';
 
 const ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
@@ -45,9 +45,12 @@ export default ({ test, assert }) => {
     inTempState((dir) => {
       assert.equal(stateRoot(), dir);
       ensureStateRoot();
-      for (const sub of ['runs', 'repos', 'sources', 'output']) {
+      for (const sub of ['runs', 'repos', 'output']) {
         assert.ok(existsSync(join(dir, sub)), `missing ${sub}`);
       }
+      // Clones must NOT live under the state root, which defaults inside the project tree: a repo
+      // there is loaded as project instructions the moment an agent reads a file in it.
+      assert.ok(!existsSync(join(dir, 'sources')), 'clones must not be created under the state root');
     });
   });
 
@@ -134,5 +137,25 @@ export default ({ test, assert }) => {
 
   test('empty state carries a schema version', () => {
     assert.equal(emptyState().schema_version, 2);
+  });
+
+  test('clones live outside the project tree', () => {
+    inTempState(() => {
+      // The whole reason for the split: the harness loads CLAUDE.md and .claude/skills/ from any
+      // directory an agent reads in, so a clone inside the project installs its own instructions.
+      assert.ok(!cloneRoot().startsWith(stateRoot()), `clones at ${cloneRoot()} are inside state root ${stateRoot()}`);
+    });
+    assert.equal(paths.sourcesDir(), cloneRoot());
+  });
+
+  test('the clone root honours an explicit override', () => {
+    const prev = process.env.GROUNDTRUTH_CLONE_DIR;
+    process.env.GROUNDTRUTH_CLONE_DIR = '/tmp/explicit-clones';
+    try {
+      assert.equal(cloneRoot(), '/tmp/explicit-clones');
+    } finally {
+      if (prev === undefined) delete process.env.GROUNDTRUTH_CLONE_DIR;
+      else process.env.GROUNDTRUTH_CLONE_DIR = prev;
+    }
   });
 };

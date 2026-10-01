@@ -1,0 +1,30 @@
+{
+  "$comment": "Model tiers. Source-tree agents ship aliases; installed agents get a resolved ID written by scripts/resolve-models.mjs.",
+  "tiers": {
+    "fast": {
+      "default": "haiku",
+      "used_by": ["discovery", "triage", "drift-checker", "spot-checker"],
+      "why": "High-volume, low-judgment work: classification and surface-level change detection."
+    },
+    "medium": {
+      "default": "sonnet",
+      "used_by": ["analyzer", "technical-verifier", "community-verifier", "conflicts-verifier"],
+      "why": "Reading code well enough to adjudicate claims against it."
+    },
+    "strong": {
+      "default": "opus",
+      "used_by": ["meta-reconciler"],
+      "why": "The reconciliation step resolves contradictions between agents and sets final tiers."
+    }
+  },
+  "env": {
+    "fast": "GROUNDTRUTH_MODEL_FAST",
+    "medium": "GROUNDTRUTH_MODEL_MEDIUM",
+    "strong": "GROUNDTRUTH_MODEL_STRONG"
+  },
+  "notes": [
+    "Aliases, not full model IDs. An alias follows the recommended version for the provider and updates over time; a pinned ID goes stale silently and, worse, resolves differently per provider.",
+    "Recorded in each run's state.json for reproducibility: alias_requested, resolved_model, and claude_code_version. A subagent cannot reliably report its own resolved model, so it is resolved before dispatch.",
+    "If a tier is unavailable, the run degrades and records downgraded: true rather than failing."
+  ]
+}

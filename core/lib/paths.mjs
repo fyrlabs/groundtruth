@@ -50,10 +50,18 @@ export function stateRoot() {
 
 export function ensureStateRoot() {
   const root = stateRoot();
-  for (const dir of ['', 'runs', 'repos', 'sources', 'output']) {
+  for (const dir of ['', 'runs', 'repos', 'output']) {
     mkdirSync(join(root, dir), { recursive: true });
   }
   return root;
+}
+
+// Clones are deliberately NOT under the state root, which defaults to <project>/.claude/groundtruth.
+// A repository inside the project tree is project configuration as far as the host harness is
+// concerned: it would load the clone's CLAUDE.md, AGENTS.md, and .claude/skills/** as instructions
+// the moment an agent read a file there. So clones go to a per-user cache instead.
+export function cloneRoot() {
+  return process.env.GROUNDTRUTH_CLONE_DIR || join(homedir(), '.cache', 'groundtruth', 'sources');
 }
 
 export const paths = {
@@ -61,13 +69,10 @@ export const paths = {
   stateRoot: stateRoot,
   runsDir: () => join(stateRoot(), 'runs'),
   reposDir: () => join(stateRoot(), 'repos'),
-  sourcesDir: () => join(stateRoot(), 'sources'),
+  sourcesDir: cloneRoot,
   outputDir: () => join(stateRoot(), 'output'),
   schemasDir: () => join(CORE_ROOT, 'schema'),
   libDir: () => join(CORE_ROOT, 'lib'),
-  // Clones live outside the project tree on purpose: a hostile repo inside the project can be
-  // auto-loaded as project instructions (CLAUDE.md, .claude/skills/) by the host harness.
-  tmpRoot: () => process.env.GROUNDTRUTH_CLONE_DIR || join(homedir(), '.cache', 'groundtruth', 'sources'),
 };
 
 export function repoDir(key) {
