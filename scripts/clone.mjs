@@ -57,6 +57,11 @@ for (const r of results) {
     setRepoStage(r.key, 'clone', 'done');
 
     process.stdout.write(`ok        ${r.key}${r.reused ? ' (reused)' : ''} sha=${r.sha?.slice(0, 12)}${version ? ` v${version}` : ''}${r.files ? ` files=${r.files}` : ''}\n`);
+    // Quarantine is not a silent convenience: the repo shipped files that instruct an AI reader,
+    // and that belongs in the report.
+    for (const q of r.quarantined || []) {
+      process.stdout.write(`            quarantined ${q.kind}: ${q.path}\n`);
+    }
   } else {
     failed += 1;
     process.stdout.write(`refused   ${r.key || url}: ${r.reason}\n`);

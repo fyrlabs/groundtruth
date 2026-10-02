@@ -236,8 +236,13 @@ None found
         verdicts: [mk('technical-verifier'), mk('community-verifier'), mk('conflicts-verifier')],
       }, { verified: 1 });
       const result = validateProfile(profile, { key: 'acme.tool', enforceReads: false });
-      assert.ok(!result.ok, 'three agents citing one README were accepted as independent verification');
-      assert.ok(result.errors.some((e) => /same file|independent/.test(e)), 'expected a correlation error');
+      assert.ok(!result.ok, 'undisclosed same-source agreement was accepted');
+      assert.ok(result.errors.some((e) => /share evidence/.test(e)), `expected a disclosure error, got: ${result.errors.join('; ')}`);
+
+      // Disclosing it keeps the tier: one agent reading the file is verification on its own terms.
+      profile.claims[0].correlated = true;
+      const disclosed = validateProfile(profile, { key: 'acme.tool', enforceReads: false });
+      assert.ok(disclosed.ok, `a disclosed correlated claim should stand: ${disclosed.errors.join('; ')}`);
     });
   });
 

@@ -4,11 +4,11 @@
 // asks a narrower question: would placing this repository inside a clone cause anything in the
 // pipeline to treat its contents as instruction?
 
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync, cpSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { inspectTree, CLONE_CAPS } from '../core/lib/clone.mjs';
+import { inspectTree, quarantineControls, CLONE_CAPS } from '../core/lib/clone.mjs';
 import { scan, scrub } from '../core/lib/injection.mjs';
 
 const ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
@@ -38,28 +38,31 @@ export default ({ test, assert }) => {
     }
   });
 
-  test('cloning this repository is refused, for the right reason', () => {
+  test('the fixture carries control files that must not reach an agent', () => {
     inTempState((dir) => {
       const clone = join(dir, 'clones', 'evil.corp');
       cpSync(FIXTURE, clone, { recursive: true });
       const { findings } = inspectTree(clone);
       const kinds = findings.map((f) => `${f.kind}:${f.path}`);
 
-      assert.ok(kinds.includes('control-file:AGENTS.md'), `AGENTS.md not refused: ${kinds.join(', ')}`);
-      assert.ok(kinds.includes('control-file:CLAUDE.md'), `CLAUDE.md not refused: ${kinds.join(', ')}`);
-      assert.ok(kinds.includes('control-dir:.claude'), `.claude/ not refused: ${kinds.join(', ')}`);
+      assert.ok(kinds.includes('control-file:AGENTS.md'), `AGENTS.md not detected: ${kinds.join(', ')}`);
+      assert.ok(kinds.includes('control-file:CLAUDE.md'), `CLAUDE.md not detected: ${kinds.join(', ')}`);
+      assert.ok(kinds.includes('control-dir:.claude'), `.claude/ not detected: ${kinds.join(', ')}`);
+      for (const f of findings.filter((x) => x.quarantinable)) {
+        assert.ok(f.quarantinable === true, `${f.path} is an instruction surface and must be quarantinable`);
+      }
     });
   });
 
-  test('the refusal is about control files, not about the repo being large', () => {
+  test('detection is not mistaken for a size refusal', () => {
     inTempState((dir) => {
       const clone = join(dir, 'clones', 'evil.corp');
       cpSync(FIXTURE, clone, { recursive: true });
       const { findings } = inspectTree(clone);
       const kinds = findings.map((f) => f.kind);
-      // A size-based refusal would be the wrong diagnosis: the tree is tiny.
-      assert.ok(!kinds.includes('too-many-files'), 'refused for size, not for control files');
-      assert.ok(!kinds.includes('tree-too-large'), 'refused for size, not for control files');
+      // A size-based verdict would be the wrong diagnosis: the tree is tiny.
+      assert.ok(!kinds.includes('too-many-files'), 'flagged for size, not for control files');
+      assert.ok(!kinds.includes('tree-too-large'), 'flagged for size, not for control files');
       assert.ok(CLONE_CAPS.maxFiles > 10, 'the cap is implausibly low, so the test would be meaningless');
     });
   });

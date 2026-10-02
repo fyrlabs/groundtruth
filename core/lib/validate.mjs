@@ -220,21 +220,22 @@ export function validateProfile(profile, { key, enforceReads = true } = {}) {
       const shared = [...counts.entries()].filter(([, n]) => n > 1).map(([f]) => f);
       const fullyShared = shared.length > 0 && counts.size === shared.length;
 
-      if (fullyShared) {
-        if (c.tier === 'code-verified') {
-          fail(errors, `${where}: every agent cites the same file(s) (${shared.join(', ')}) — ` +
-            'agreement from a shared source is not independent verification; downgrade or cite distinct evidence');
-        }
-        if (c.correlated !== true) {
-          fail(errors, `${where}.correlated must be true when all verdicts cite the same file`);
-        }
-      } else if (shared.length) {
-        // Partial overlap is disclosed but allowed: a genuine code-verified finding often has more
-        // than one agent corroborating part of it.
-        if (c.tier === 'code-verified' && c.correlated !== true) {
-          errors.push(`${where}: agents share evidence (${shared.join(', ')}) — set correlated: true to disclose it`);
-        }
-      } else if (c.correlated === true) {
+      // Same-source agreement must be DISCLOSED, not downgraded. One agent reading the actual file
+      // is code verification on its own terms — the tier answers "was this confirmed by reading the
+      // code", and it was. What would mislead is implying three agents confirmed it independently,
+      // so that is what gets blocked: an undisclosed correlated claim is rejected, a disclosed one is
+      // accepted with its tier intact.
+      //
+      // An earlier revision blocked the tier itself, which was wrong twice over. It forced a false
+      // downgrade on a licence claim where two agents applied genuinely different arguments to the
+      // same file, and it conflated "is this verified" with "was this independently verified" — two
+      // different questions that belong in two different fields.
+      if (shared.length && c.correlated !== true) {
+        fail(errors, `${where}: agents share evidence (${shared.join(', ')}) — their agreement carries no ` +
+          'independent weight, so it must be disclosed with correlated: true. The tier may stand if the ' +
+          'cited file genuinely settles the claim.');
+      }
+      if (!shared.length && distinctAgents.size > 1 && c.correlated === true) {
         fail(errors, `${where}.correlated is true but the agents cited distinct files`);
       }
     }

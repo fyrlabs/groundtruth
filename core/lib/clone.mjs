@@ -12,8 +12,8 @@
 // instructions by construction.
 
 import { execFileSync } from 'node:child_process';
-import { existsSync, readdirSync, readlinkSync, rmSync, statSync, lstatSync, appendFileSync, mkdirSync } from 'node:fs';
-import { join, relative, resolve, sep } from 'node:path';
+import { appendFileSync, cpSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, readlinkSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { dirname, join, relative, resolve, sep } from 'node:path';
 import { paths, repoDir, repoKey, stateRoot } from './paths.mjs';
 
 export const CAPS = {
@@ -23,9 +23,17 @@ export const CAPS = {
   maxDepth: 12,
 };
 
-// Nested instruction and config files. Presence of any of these is disqualifying: the harness
-// would load them as instructions, and a repo that ships them is asserting control over its
-// reader rather than describing itself.
+// Nested instruction and config files. These are quarantined, not treated as disqualifying.
+//
+// The original policy refused any repo shipping one of these. That was correct when clones sat inside
+// the project tree, because the host auto-loads a CLAUDE.md from any directory an agent reads in.
+// Clones now live in a per-user cache outside every project, so that auto-load cannot happen — and the
+// refusal turned out to block most of the ecosystem worth analysing: hermes-agent ships seven
+// AGENTS.md files, cloudflare/security-audit-skill ships its own. Refusing them would have made the
+// tool useless on exactly the repos people want to check.
+//
+// So they are moved into a quarantine store outside the clone. The repo stays analysable, and no
+// instruction file remains reachable by an agent.
 const CONTROL_FILES = new Set(['CLAUDE.md', 'CLAUDE.local.md', 'AGENTS.md', 'GEMINI.md', '.cursorrules', 'CLAUDE.local.json']);
 const CONTROL_DIRS = new Set(['.claude', '.gemini', '.cursor']);
 
@@ -35,6 +43,9 @@ function git(args, cwd) {
   return execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 600000 });
 }
 
+// collect() separates the two outcomes that were previously conflated in one `findings` array:
+// things that make a tree dangerous to read (injection surfaces) and things that merely make it
+// expensive (size). Quarantine the first, refuse the second.
 export function inspectTree(root) {
   const findings = [];
   let files = 0;
@@ -73,7 +84,7 @@ export function inspectTree(root) {
         continue;
       }
       if (CONTROL_FILES.has(entry.name)) {
-        findings.push({ kind: 'control-file', path: relative(root, full) });
+        findings.push({ kind: 'control-file', path: relative(root, full), quarantinable: true });
         continue;
       }
       files += 1;
@@ -93,16 +104,59 @@ export function inspectTree(root) {
 }
 
 // Shallow, single-branch, no submodules: we analyse the source, not its history or its dependencies.
+export function quarantineRoot(key) {
+  return join(paths.stateRoot(), 'quarantine', key);
+}
+
+// Move control files out of the clone rather than deleting them: the repo's own documentation is
+// evidence, and a report should be able to say what the project told its AI tools to do.
+export function quarantineControls(root, key, findings) {
+  const targets = findings.filter((f) => f.quarantinable);
+  if (!targets.length) return [];
+
+  const store = quarantineRoot(key);
+  rmSync(store, { recursive: true, force: true });
+  const moved = [];
+
+  for (const f of targets) {
+    const from = join(root, f.path);
+    const to = join(store, f.path);
+    try {
+      mkdirSync(dirname(to), { recursive: true });
+      renameSync(from, to);
+      moved.push({ ...f, quarantined_to: to });
+    } catch (error) {
+      // rename fails across devices; copy-then-remove is the fallback, and a genuine failure must
+      // not be swallowed — an instruction file left in place is the whole risk.
+      try {
+        cpSync(from, to, { recursive: true });
+        rmSync(from, { recursive: true, force: true });
+        moved.push({ ...f, quarantined_to: to });
+      } catch (inner) {
+        return [{ ...f, quarantine_failed: String(inner.message) }];
+      }
+      void error;
+    }
+  }
+  return moved;
+}
+
 export function cloneRepo(url, { force = false } = {}) {
   const key = repoKey(url);
   if (!key) return { key: null, ok: false, reason: `not a GitHub repo URL: ${url}` };
 
   const root = repoDir(key);
+
+  // A refusal marker survives a failed attempt, so a retry reports the real reason instead of
+  // letting git fail on a non-empty destination directory and hiding the cause.
+  const markerPath = join(root, '.groundtruth-refused.json');
+  if (!force && existsSync(markerPath)) {
+    const marker = JSON.parse(readFileSync(markerPath, 'utf8'));
+    return { key, ok: false, root, reason: marker.reason, findings: marker.findings || [], repeated: true };
+  }
+
   if (existsSync(join(root, '.git'))) {
-    const { findings } = inspectTree(root);
-    if (!findings.length) return { key, ok: true, root, reused: true, sha: git(['rev-parse', 'HEAD'], root).trim() };
-    if (!force) return { key, ok: false, root, reason: 'existing clone contains control files; re-clone with --force', findings };
-    rmSync(root, { recursive: true, force: true });
+    if (force) rmSync(root, { recursive: true, force: true });
   }
 
   mkdirSync(root, { recursive: true });
@@ -113,15 +167,33 @@ export function cloneRepo(url, { force = false } = {}) {
     return { key, ok: false, reason: `clone failed: ${String(error.stderr || error.message).trim()}` };
   }
 
+  const sha = git(['rev-parse', 'HEAD'], root).trim();
+
+  // Re-inspect after any forced re-clone, then split findings into quarantine vs refusal.
   const { files, bytes, findings } = inspectTree(root);
-  if (findings.length) {
-    // Keep the tree for forensics, but mark it unusable. An agent must never be pointed here.
+  const refusable = findings.filter((f) => !f.quarantinable);
+
+  if (refusable.length) {
+    // Expensive or malformed: the repo is not analysable, and the reason must survive a retry.
+    writeFileSync(markerPath, `${JSON.stringify({ reason: 'tree exceeds clone caps', findings: refusable, at: new Date().toISOString() }, null, 2)}\n`);
     rmSync(join(root, '.git'), { recursive: true, force: true });
-    return { key, ok: false, root, reason: 'tree contains harness control files or exceeds caps', findings, files, bytes };
+    return { key, ok: false, root, sha, reason: 'tree exceeds clone caps', findings: refusable, files, bytes };
   }
 
-  const sha = git(['rev-parse', 'HEAD'], root).trim();
-  return { key, ok: true, root, sha, files, bytes, reused: false };
+  const quarantined = quarantineControls(root, key, findings);
+  const failed = quarantined.filter((q) => q.quarantine_failed);
+  if (failed.length) {
+    rmSync(root, { recursive: true, force: true });
+    return { key, ok: false, root, sha, reason: 'could not quarantine every control file, so the repo was discarded', findings: failed };
+  }
+
+  const { findings: after } = inspectTree(root);
+  if (after.length) {
+    rmSync(root, { recursive: true, force: true });
+    return { key, ok: false, root, sha, reason: 'control files remained after quarantine', findings: after };
+  }
+
+  return { key, ok: true, root, sha, files, bytes, quarantined, reused: false };
 }
 
 // Read-only remote probe. Uses ls-remote rather than `git pull`: pulling mutates the working tree

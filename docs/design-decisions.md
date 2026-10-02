@@ -155,10 +155,20 @@ independent verification is the specific failure mode this architecture exists t
 invisible to a reader who only sees three agreeing verdicts.
 
 **Alternatives considered.** Trusting a majority vote: rejected, majority of correlated samples is
-still one opinion.
+still one opinion. **Blocking the tier outright**, which is what an earlier revision did: rejected,
+and rejected on evidence from the first live run. On a licence claim, two agents applied genuinely
+different arguments to the same file — one checking the licence text, one checking the copyright
+holder against the publishing org — and the rule forced a downgrade to `self-reported` for a
+plainly verified fact. That conflated two different questions: *was this confirmed by reading the
+file* (yes, by one agent, which is what `code-verified` means) and *was it independently confirmed*
+(which it was not, and which `correlated` records). Disclosure is the correct control, because the
+harm is the reader believing three agents agreed independently.
 
-**Tradeoff.** Some genuinely well-evidenced claims, where several agents reasonably cite one file,
-get marked correlated. The note says so rather than hiding it.
+**Tradeoff.** A reader can still see a `code-verified` claim whose agreement was correlated. The tier
+column reads `✅` and the notes column reads `correlated — same source cited by all agents`, so the
+caveat is present but not in the signal itself. A reader scanning only the tier column will
+over-read it. Making the tier itself encode independence would mean a fifth value for a distinction
+the provenance record already carries.
 
 ## 9. The renderer is the only writer of the report
 

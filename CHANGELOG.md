@@ -85,6 +85,17 @@ control that appeared to exist and did not:
 
 ### Changed
 
+- **Repositories with harness control files are now analysed rather than refused.** `CLAUDE.md`,
+  `AGENTS.md`, `.claude/` and siblings are quarantined outside the clone and disclosed in the run log.
+  The refusal was a leftover from when clones sat inside the project tree; it now excluded most of the
+  ecosystem worth analysing, since `hermes-agent` ships twelve `AGENTS.md` files and
+  `cloudflare/security-audit-skill` ships its own. A first live run against trending repositories hit it
+  immediately. Only size, depth, and file-count overruns still refuse.
+- **Correlated agreement must be disclosed, no longer blocks the tier.** The first live run surfaced
+  this as wrong: on a licence claim, two agents applied different arguments to one file and the rule
+  forced a downgrade of a verified fact. `code-verified` answers "was this confirmed by reading the
+  file"; independence is a separate question recorded in `correlated`. Undisclosed same-source agreement
+  is still rejected.
 - Resumability is now real. State is versioned JSON with agent payloads beside their stage markers,
   written atomically. A stage counts as complete only if its payload exists — the previous design
   recorded ✅ for work whose output lived only in a dying context window, which is precisely the
