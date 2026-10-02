@@ -158,6 +158,26 @@ switch (cmd) {
     break;
   }
 
+  case 'record-models': {
+    const raw = rest.find((r) => r.startsWith('{'));
+    if (!raw) {
+      process.stderr.write('usage: state.mjs record-models \'{"fast":"haiku","medium":"sonnet"}\'\n');
+      process.exit(1);
+    }
+    let resolved;
+    try {
+      resolved = JSON.parse(raw);
+    } catch (error) {
+      process.stderr.write(`record-models: invalid JSON (${error.message})\n`);
+      process.exit(1);
+    }
+    const state = loadState();
+    state.models = { ...resolved, recorded_at: new Date().toISOString() };
+    saveState(state);
+    process.stdout.write(`recorded models: ${Object.entries(resolved).map(([k, v]) => `${k}=${v}`).join(' ')}\n`);
+    break;
+  }
+
   case 'finish': {
     const state = loadState();
     if (state.status === 'IDLE' || !state.run_id) {
@@ -207,6 +227,6 @@ function writeManifest(key, record) {
     // treating the usage message as success. Two orchestrator steps were silently dead because of
     // this exit code.
     process.stderr.write(`unknown subcommand: ${cmd}\n`);
-    process.stderr.write('usage: state.mjs <show|start|approve|fail|stage|payload|progress|registry|record-manifest|finish|reset>\n');
+    process.stderr.write('usage: state.mjs <show|start|approve|fail|stage|payload|progress|registry|record-manifest|record-models|finish|reset>\n');
     process.exit(2);
 }

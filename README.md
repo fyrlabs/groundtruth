@@ -113,17 +113,39 @@ git-ignored. Override the location with `GROUNDTRUTH_STATE_DIR`; clones move ind
 
 ## Configuration
 
+Models are yours to choose. Three tiers, resolved at the start of every run and passed to each agent on
+dispatch — which is the only mechanism that works, because `model:` in an agent file is static text read
+at spawn time and no script or settings key can change it.
+
+| Tier | Used by | Default |
+|---|---|---|
+| `fast` | discovery, triage, drift-check, spot-check | `haiku` |
+| `medium` | analyzer, the three verifiers | `sonnet` |
+| `strong` | meta-reconciler | `opus` |
+
 ```bash
-# Model tiers: fast (discovery, triage, drift, spot-check), medium (analysis and verification),
-# strong (reconciliation). Defaults are aliases, which follow your provider and update over time.
-GROUNDTRUTH_MODEL_FAST=haiku
-GROUNDTRUTH_MODEL_MEDIUM=sonnet
-GROUNDTRUTH_MODEL_STRONG=opus
+# Override one tier, or all three
+GROUNDTRUTH_MODEL_STRONG=sonnet npm run verify   # cheaper reconciliation
+GROUNDTRUTH_MODEL_FAST=inherit                    # follow whatever the session is using
+/model opus                                       # or just set it for the session
 ```
 
-Aliases rather than pinned IDs on purpose: `sonnet` resolves to different versions on the Anthropic
-API, AWS, Bedrock, and Foundry, so pinning one hands some users a model nobody chose. Pin a full ID
-if you want reproducibility more than currency — the run records what was resolved either way.
+Or edit `config/models.json` to change the shipped defaults.
+
+Every knob accepts a **full model ID** as well as an alias. Aliases are the default because they
+follow your provider's current recommendation and resolve differently per provider — `sonnet` is
+Sonnet 5.5 on the Anthropic API, 4.6 on Claude Platform on AWS, and 4.5 on Bedrock, so a pinned ID
+would hand some users a model nobody chose and would go stale silently. Pin one when you want
+reproducibility over currency.
+
+Whatever you choose is recorded in the run's state and surfaces in `report.provenance.json`, so a
+published profile can say which model produced each claim. Nothing is backfilled with a guess.
+
+Check what a run would use:
+
+```bash
+node scripts/resolve-models.mjs --json     # resolved tiers, and whether each is a default or yours
+```
 
 ## Development
 

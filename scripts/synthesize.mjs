@@ -111,6 +111,8 @@ export function synthesize(profiles) {
     schema_version: 1,
     run_id: state.run_id || null,
     generated_at: new Date().toISOString(),
+    // Which models actually ran, so a published report can be reproduced or challenged. null until
+    // recorded — the absence is itself informative and is not backfilled with a guess.
     models: state.models || null,
     repos,
     totals,

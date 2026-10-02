@@ -54,11 +54,33 @@ function agentPath(name) {
   return map[name] ? join(ROOT, 'agents', map[name]) : null;
 }
 
+export function tierOfAgent() {
+  return Object.fromEntries(
+    Object.entries(config.tiers).flatMap(([tier, spec]) => spec.used_by.map((name) => [name, tier])),
+  );
+}
+
 if (import.meta.url === `file://${process.argv[1]}`) {
   const table = resolutionTable();
   const byName = Object.fromEntries(Object.entries(config.tiers).flatMap(([tier, spec]) => spec.used_by.map((n) => [n, tier])));
 
-  if (process.argv.includes('--write')) {
+  // --json is what the orchestrator calls at Step 0. It must be machine-readable and must report
+  // provenance, because the user needs to know whether they are seeing a default or their own setting.
+  if (process.argv.includes('--json')) {
+    const tiers = {};
+    const source = {};
+    for (const row of table) {
+      tiers[row.tier] = row.requested;
+      source[row.tier] = row.pinned ? row.source : row.source;
+    }
+    process.stdout.write(`${JSON.stringify({
+      tiers,
+      source,
+      agents: byName,
+      recorded: true,
+      note: 'Pass each tier\'s model as the `model` parameter on every Task dispatch; agent frontmatter is the fallback.',
+    }, null, 2)}\n`);
+  } else if (process.argv.includes('--write')) {
     let changed = 0;
     for (const [name, tier] of Object.entries(byName)) {
       const path = agentPath(name);
@@ -87,7 +109,8 @@ if (import.meta.url === `file://${process.argv[1]}`) {
     if (unresolved.length) {
       process.stdout.write('agents still hold aliases (expected in the source tree):\n');
       for (const u of unresolved) process.stdout.write(`  ${u}\n`);
-      process.stdout.write('\ninstalled copies should carry resolved IDs: node scripts/resolve-models.mjs --write\n');
+      process.stdout.write('\naliases are expected here: the orchestrator resolves tiers at Step 0 and passes them per dispatch.\n');
+      process.stdout.write('See --write only when pinning the shipped agent files themselves.\n');
     } else {
       process.stdout.write('all agents carry resolved model IDs\n');
     }

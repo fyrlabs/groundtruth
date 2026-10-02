@@ -221,6 +221,29 @@ check('the orchestrator documents the clone location the code implements', () =>
 
 // Two orchestrator steps invoked subcommands that did not exist, and the default branch exited 0, so
 // the caller saw success. The usage text is only enforced if something checks it against reality.
+// GROUNDTRUTH_MODEL_* is documented in the README, but `model:` in agent frontmatter is static text
+// read at spawn time, so an env override can only take effect if the orchestrator resolves the tiers
+// and passes them on each dispatch. Without this the documented knob silently does nothing.
+check('the orchestrator resolves models and passes them per dispatch', () => {
+  const skill = readFileSync(join(ROOT, 'skills/analyze/SKILL.md'), 'utf8');
+  if (!/resolve-models\.mjs --json/.test(skill)) {
+    throw new Error('SKILL.md never resolves model tiers, so GROUNDTRUTH_MODEL_* has no effect');
+  }
+  if (!/model: <(fast|medium|strong)>/.test(skill)) {
+    throw new Error('SKILL.md dispatches no `model:` parameter, so resolved tiers are never applied');
+  }
+  // Every tier must be wired to at least one dispatch.
+  for (const tier of ['fast', 'medium', 'strong']) {
+    if (!skill.includes(`model: <${tier}>`)) throw new Error(`tier "${tier}" is resolved but never dispatched`);
+  }
+  // And the resolution must be recorded, or a report cannot state what produced a claim.
+  if (!/record-models/.test(skill)) {
+    throw new Error('SKILL.md does not record the resolved models, so provenance cannot name them');
+  }
+  if (!existsSync(join(ROOT, 'scripts/resolve-models.mjs'))) throw new Error('scripts/resolve-models.mjs missing');
+  return '3 tiers resolved, dispatched, and recorded';
+});
+
 check('every script invocation in the orchestrator resolves to a real subcommand', () => {
   const skill = readFileSync(join(ROOT, 'skills/analyze/SKILL.md'), 'utf8');
   const source = readFileSync(join(ROOT, 'scripts/state.mjs'), 'utf8');

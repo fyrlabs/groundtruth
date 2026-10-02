@@ -82,10 +82,32 @@ Step 7  Finalize: synthesize, render report, update registry
 
 ---
 
-## Step 0 — Load state (ALWAYS FIRST)
+## Step 0 — Load state and resolve models (ALWAYS FIRST)
 
 ```bash
 node ${CLAUDE_PLUGIN_ROOT}/scripts/state.mjs show
+node ${CLAUDE_PLUGIN_ROOT}/scripts/resolve-models.mjs --json
+```
+
+The second command is what makes models configurable. `model:` in an agent file is static text read
+at spawn time, so it cannot be changed by a script or a settings key. What *can* change it is the
+`model` parameter on each dispatch — so resolve the tiers **once, here**, and pass the resolved model
+to every `Task` call below. `resolve-models.mjs --json` returns:
+
+```json
+{ "tiers": { "fast": "haiku", "medium": "sonnet", "strong": "opus" },
+  "source": { "fast": "default", "medium": "env:GROUNDTRUTH_MODEL_MEDIUM", "strong": "default" },
+  "recorded": true }
+```
+
+Which tier each agent belongs to is in `config/models.json`. Pass the tier's resolved model on the
+dispatch — that is what makes `GROUNDTRUTH_MODEL_*` actually take effect. An agent's own `model:`
+frontmatter is the **fallback** for a dispatch that omits the parameter, not the primary mechanism.
+
+Then record the resolution, so a report can state which model produced each claim:
+
+```bash
+node ${CLAUDE_PLUGIN_ROOT}/scripts/state.mjs record-models '{"fast":"haiku","medium":"sonnet","strong":"opus"}'
 ```
 
 This prints the run status, the analysis queue, and `next_step`. It is the only authority on where
@@ -133,7 +155,7 @@ Failures mark that repo `clone_failed` in state and do not halt the run.
 
 ## Step 2B — Discovery (only when there were no targets)
 
-Dispatch `groundtruth:discovery`, then `groundtruth:triage`.
+Dispatch `groundtruth:discovery` (tier: fast), then `groundtruth:triage` (tier: fast).
 
 `groundtruth:discovery` takes `DOMAIN` (inferred from the registry when the user named none) plus the
 registry and watch-list URLs, so already-known candidates are excluded. It writes a `discovery.json`
@@ -197,11 +219,12 @@ If discovery ran more than 7 days ago, warn that candidates may be stale.
 
 Repos in the approved queue are processed in parallel; stages within a repo are sequential.
 
-**5a. `groundtruth:analyzer`** — pass `REPO_NAME`, `REPO_PATH`, `REPO_URL`, `REPO_SHA`, `LAST_COMMIT`,
-`ANALYSIS_DATE`. Receives `analysis.json`. If it fails, mark and continue; do not substitute a
+**5a. `groundtruth:analyzer`** (tier: medium) — pass `REPO_NAME`, `REPO_PATH`, `REPO_URL`, `REPO_SHA`,
+`LAST_COMMIT`, `ANALYSIS_DATE`, and `model: <medium>`. Receives `analysis.json`. If it fails, mark and continue; do not substitute a
 different agent.
 
-**5b. Three verifiers in parallel** — each gets a **disjoint** evidence surface:
+**5b. Three verifiers in parallel** (tier: medium for all three) — pass `model: <medium>` on each.
+Each gets a **disjoint** evidence surface:
 
 | Agent | Evidence surface | Must not read |
 |---|---|---|
@@ -212,7 +235,8 @@ different agent.
 Disjointness is not a style preference. Verifiers sharing inputs fail together, and the reconciler
 would report their agreement as strong evidence.
 
-**5c. `groundtruth:spot-checker`** — live stats, security advisories, deprecation signals.
+**5c. `groundtruth:spot-checker`** (tier: fast) — live stats, security advisories, deprecation
+signals. Pass `model: <fast>`.
 Receives `spotcheck.json`.
 
 For `CONTENT_DRIFT` repos, run 5c only.
@@ -226,7 +250,8 @@ node ${CLAUDE_PLUGIN_ROOT}/scripts/validate-payload.mjs <file>
 ## Step 6 — Reconcile and render
 
 If the spot-check or community verification raised a deprecation or replacement flag, **pause and ask
-before writing a negative profile.** Then dispatch `groundtruth:meta-reconciler`, which emits
+before writing a negative profile.** Then dispatch `groundtruth:meta-reconciler` (tier: strong — pass
+`model: <strong>`), which emits
 `profile.json` — a single JSON object, never markdown. The renderer produces the prose sections
 from the JSON's `prose` fields; the reconciler never writes the report itself.
 
@@ -255,6 +280,30 @@ Never halt the whole run for one repo. At the end, report which repos are incomp
 
 Re-running after a failure resumes the affected stage. Repos already rendered are skipped — rendering
 is idempotent, so a re-render produces byte-identical output.
+
+## Model selection
+
+Models are **yours to choose**. The defaults exist so a first run needs no configuration, and they are
+tiers rather than per-agent pins because that is what people actually want to change — a cheap
+classification pass, a normal reasoning tier, and the expensive reconciliation.
+
+Three ways to override, in increasing precedence:
+
+| Mechanism | Scope | Example |
+|---|---|---|
+| `config/models.json` | the shipped default | `{"tiers": {"fast": {"default": "haiku"}}}` |
+| `GROUNDTRUTH_MODEL_FAST` / `_MEDIUM` / `_STRONG` | one tier | `GROUNDTRUTH_MODEL_STRONG=sonnet` |
+| `/model` in your session | the session | `/model opus` |
+
+All three accept a **full model ID** as well as an alias. Pin when you want reproducibility
+(`GROUNDTRUTH_MODEL_MEDIUM=claude-sonnet-4-5-20250929`); use an alias when you want the provider's
+current recommendation — aliases resolve differently per provider, which is why they are the default.
+`opus`, `sonnet`, and `haiku` are the recognised aliases; `inherit` follows your session model, which is
+the right choice if you have already picked a model you trust.
+
+Prefer aliases by default: a pinned ID goes stale silently, and `sonnet` resolves to different versions
+on the Anthropic API, AWS, Bedrock, and Foundry, so pinning hands some users a model nobody chose. Either
+way the resolution is recorded in state, so a published report can say what actually ran.
 
 ## Non-negotiables
 

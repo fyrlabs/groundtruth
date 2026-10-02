@@ -116,6 +116,15 @@ Repositories are now treated as hostile input throughout.
 - New `SECURITY.md` stating what is **not** defended, including that `WebFetch` exfiltration cannot be
   contained by any shipped configuration.
 
+### Fixed
+
+- **The documented model overrides did nothing.** README advertised `GROUNDTRUTH_MODEL_*`, but
+  `model:` in agent frontmatter is static text read at spawn time — no script or settings key can
+  change it — so an installed plugin ignored the variable entirely. The orchestrator now resolves the
+  tiers at Step 0 and passes each tier's model on the `Task` dispatch, which is the only mechanism
+  that works. The resolution is recorded in state and surfaces in `report.provenance.json`, so a
+  published profile can name the model behind each claim.
+
 ### Added
 
 - `scripts/verify-layout.mjs` — 21 layout and packaging invariants, including the clone-location

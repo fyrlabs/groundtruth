@@ -38,8 +38,13 @@ set of repositories, re-checked only where the commit changed. Everything else s
   accommodate a payload.
 - **Zero runtime dependencies.** The package ships none. `npm audit` is therefore a no-op and must not
   be cited as a control.
-- **Source state is aliases; installed state is resolved IDs.** `model:` in frontmatter is static
-  text read at spawn time — no script can change it at runtime.
+- **`model:` in frontmatter is static text read at spawn time.** No script, hook, or settings key can
+  change it. The only runtime mechanism is the `model` parameter on a `Task` dispatch, which is why
+  Step 0 resolves the tiers and passes them per call. Changing an agent's `model:` is a fallback for a
+  dispatch that omits the parameter, never the primary path.
+- **`CLAUDE_CODE_SUBAGENT_MODEL_FORCE` is not a tier mechanism.** It ignores every subagent's
+  `model` field and forces one model for all, which collapses the tiers and runs reconciliation on
+  whatever the user picked. Offer it only as a documented single-model debug flag.
 
 ## Quality gates
 
