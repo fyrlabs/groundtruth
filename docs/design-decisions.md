@@ -239,8 +239,68 @@ refusal, rendering — live in `core/`.
 **Alternatives considered.** Generating the Claude adapter from a neutral core: rejected, the
 transforms are lossy in both directions (a `tools:`-restricted agent deployed to a host that ignores
 `tools` silently gains access), which would make the shipped layout a lie. Restructuring around a
-package manager: it excludes agents from its portable core, so it cannot express this project's
-product.
+package manager: reconsidered against APM specifically and deferred with explicit conditions — see
+decision 14. An earlier version of this entry claimed agent package managers exclude agents from their
+portable core; that was wrong, and it was corrected rather than quietly deleted because the reasoning
+above depends on it.
 
 **Tradeoff.** Other harnesses get the orchestrator and the deterministic core, not the fan-out. Adding
 a host means writing an adapter, not changing the pipeline.
+
+---
+
+## 14. Ship as a Claude Code plugin; APM adoption is deferred, not rejected
+
+**Decision.** Distribution is the Claude Code plugin marketplace. We do not adopt APM (Microsoft's
+Agent Package Manager) now, and we do not write an `.apm/` package. Revisit when the conditions below
+are met.
+
+**Reasoning.** APM is the strongest candidate for the multi-harness story and is worth taking seriously
+— it does carry agents, contrary to an earlier note in this file's history. Three findings decided it,
+all verified against APM's own docs and its issue tracker rather than inferred:
+
+1. **The `tools` shape collides.** APM's agent format uses a **mapping** (`tools: {Read: true}`),
+   because OpenCode's loader rejects the list form. Claude Code rejects the mapping form outright:
+   a plugin whose agent frontmatter uses it registers **no agents at all**. One source shape cannot
+   satisfy both, and the two harnesses we can actually test disagree.
+2. **Our security posture depends on fields APM drops.** `disallowedTools` (no `Write`/`Edit` for any
+   agent), `omitClaudeMd` (stops the host loading a clone's instruction files), and `maxTurns` (a
+   silent-truncation guard) reach Claude through APM only as extra frontmatter. Codex keeps just
+   `name`, `description`, and body — issue #3126, open today, reports `model` being dropped silently
+   there, so the same class of loss is actively being reported. An agent that reaches a target with
+   *wider* tool access than intended is the one failure this project is built to avoid.
+3. **The transforms are currently broken for a target we would care about.** Issue #3129, open today:
+   APM writes Claude-shaped hooks into `.cursor/hooks.json`, which Cursor rejects wholesale. Our
+   guards *are* the security mechanism for four harnesses.
+
+The counter-argument, stated fairly: Microsoft backing means these will likely get fixed, and the
+ecosystem may consolidate around it. That is a reason to keep the door open, not to ship a
+transform that today widens tool access.
+
+**What makes this cheap to reverse.** Our `plugin.json` declares no `$schema`, and `.claude-plugin/`
+is present — which is exactly APM's documented signal for the *Plugin collection* package type, the
+route whose job is to consume an existing Claude plugin without restructuring. Adding `apm.yml`
+later is an additive file; nothing in `core/`, `agents/`, `skills/`, or `hooks/` needs to move.
+That is the concrete reason for the harness-neutral layout in decision 13.
+
+**Revisit when all of these hold:**
+
+| Condition | Why it is the gate |
+|---|---|
+| `.apm/agents/*.agent.md` can express `disallowedTools`, `omitClaudeMd`, `maxTurns` — or we accept their absence per target | Without them the least-privilege guarantee does not port |
+| #3126 fixed: Codex preserves `model` | A silently dropped pin is worse than a rejected file |
+| #3129 fixed: Cursor hooks emit Cursor's schema | Our guards are the enforcement layer |
+| A Claude-side mapping-form `tools` is accepted, **or** a documented dual-emission path exists | Currently one of the two harnesses silently gets zero agents |
+| Windsurf / Gemini gain an agents primitive (currently they deploy none) | Two mainstream harnesses would otherwise have no fan-out |
+| `apm compile --validate` passes on our tree | The cheapest available signal that a manifest is well-formed |
+
+Until then the adoption cost is zero and the option is preserved.
+
+**Alternatives considered.** Adopt now via the plugin-collection route: rejected on (2) and (3) — it
+would work for Claude while quietly widening access elsewhere, which is the specific failure mode
+this tool exists to prevent. Restructure into `.apm/` now: rejected outright, it breaks Claude
+registration today. Hand-maintain thin per-harness stubs: rejected as a permanent dual-source
+liability for zero tested benefit while only one harness works.
+
+**Tradeoff.** We are not on the ecosystem's preferred train, and if APM consolidates the space we will
+be a slower follower. Mitigated by decision 13 and the additive cost above.
