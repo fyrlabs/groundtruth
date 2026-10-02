@@ -146,3 +146,20 @@ export function run() {
 }
 
 export { AGENT_FIELDS_LOCAL, AGENT_FIELDS_PLUGIN, AGENT_FIELDS_IGNORED_IN_PLUGIN, SKILL_FIELDS, MODELS, parseFrontmatter };
+
+// A linter that exports a `run()` and never calls it reports success forever, which is worse than no
+// linter: `npm run verify:frontmatter` exited 0 while the file contained two deliberate violations.
+// `verify-layout.mjs` caught the same class of bug in the orchestrator, so this one gets the same
+// treatment — the module runs itself when invoked directly, and a test asserts it actually fails on
+// a planted violation.
+if (import.meta.url === `file://${process.argv[1]}`) {
+  const { problems, agentCount, skillCount } = run();
+  const rel = (f) => f.replace(`${ROOT}/`, '');
+  if (problems.length) {
+    process.stderr.write(`frontmatter lint failed:\n\n`);
+    for (const p of problems) process.stderr.write(`  ${p}\n`);
+    process.stderr.write(`\n${problems.length} problem(s) across ${agentCount} agents and ${skillCount} skills\n`);
+    process.exit(1);
+  }
+  process.stdout.write(`frontmatter ok: ${agentCount} agents, ${skillCount} skills\n`);
+}

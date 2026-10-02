@@ -244,6 +244,35 @@ check('the orchestrator resolves models and passes them per dispatch', () => {
   return '3 tiers resolved, dispatched, and recorded';
 });
 
+// Each npm script must actually invoke a real script. A `files` allowlist is silent about a missing
+// path, and a stub script that exits 0 is worse than a missing one: `npm run verify` would report
+// green while checking nothing.
+check('every npm script resolves to a script that exists and does work', () => {
+  const pkg = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8'));
+  const broken = [];
+  for (const [name, command] of Object.entries(pkg.scripts || {})) {
+    for (const m of command.matchAll(/scripts\/([a-z-]+\.mjs)/g)) {
+      const path = join(ROOT, 'scripts', m[1]);
+      if (!existsSync(path)) {
+        broken.push(`npm run ${name} -> scripts/${m[1]} does not exist`);
+        continue;
+      }
+      // A linter or verifier that exports a function and never calls it exits 0 forever.
+      const source = readFileSync(path, 'utf8');
+      const exportsARun = /export function run\(/.test(source);
+      const selfInvokes = /import\.meta\.url === `file:\/\/\$\{process\.argv\[1\]\}`/.test(source);
+      if (exportsARun && !selfInvokes) {
+        broken.push(`scripts/${m[1]} exports run() but never invokes it, so it always exits 0 (npm run ${name})`);
+      }
+      if (/\{\s*ok: true, errors: \[\]\s*\}\s*;?\s*$/m.test(source.trim()) && !/ok: true/.test(source)) {
+        broken.push(`scripts/${m[1]} ends in a stub that reports success`);
+      }
+    }
+  }
+  if (broken.length) throw new Error(broken.join('; '));
+  return `${Object.keys(pkg.scripts || {}).length} scripts, all resolving`;
+});
+
 check('every script invocation in the orchestrator resolves to a real subcommand', () => {
   const skill = readFileSync(join(ROOT, 'skills/analyze/SKILL.md'), 'utf8');
   const source = readFileSync(join(ROOT, 'scripts/state.mjs'), 'utf8');

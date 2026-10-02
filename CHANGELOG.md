@@ -40,6 +40,12 @@ The pipeline had never run. This release makes it work, and makes it trustworthy
 Found by an adversarial review of the first draft of 0.2.0, and fixed before release. Each was a
 control that appeared to exist and did not:
 
+- **`npm run verify:frontmatter` was a no-op.** `lint-frontmatter.mjs` exported a `run()` function and
+  never called it, so it exited 0 forever — including while the repository contained two deliberate
+  violations. A linter that cannot fail is worse than no linter, because it manufactures confidence.
+  Now self-invoking, with a test that plants a violation and asserts a non-zero exit, and a layout
+  invariant that catches the whole class for every npm script.
+
 - **The citation-provenance check was reading a log nothing wrote.** `validate.mjs` had the plumbing
   for verifying that an agent read the file it cited, and no writer anywhere — so it was dead code, and
   the central claim of the release rested on it. The `PostToolUse` hook now records each read, and the
@@ -127,11 +133,12 @@ Repositories are now treated as hostile input throughout.
 
 ### Added
 
-- `scripts/verify-layout.mjs` — 21 layout and packaging invariants, including the clone-location
-  contract, the orchestrator's CLI surface, and per-stage write validation. This is the file whose absence
+- `scripts/verify-layout.mjs` — 23 layout and packaging invariants, including the clone-location
+  contract, the orchestrator's CLI surface, per-stage write validation, and a check that every npm
+  script resolves to a script that does real work. This is the file whose absence
   let three separately fatal bugs ship; a new agent, skill, or script must extend it in the same
   commit.
-- 98 tests with no dependencies, covering a hostile-repository fixture, citation provenance
+- 106 tests with no dependencies, covering a hostile-repository fixture, citation provenance
   (existence, containment, per-agent read log, correlation by canonical path), credential exfiltration,
   and the command shapes that defeated earlier revisions of the guards.
 - `report.provenance.json` in W3C PROV-O shape, so every tier can be audited mechanically instead of
