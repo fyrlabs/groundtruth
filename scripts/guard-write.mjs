@@ -7,6 +7,7 @@
 // is silently discarded by the next render, which is worse than a refused write.
 
 import { join, resolve, sep } from 'node:path';
+import { PLUGIN_ROOT } from './hook-lib.mjs';
 import { allow, cloneRoot, deny, logEvent, readStdin, stateRoot, toolInputPath } from './hook-lib.mjs';
 import { canonical, contains, relativeTo } from './hook-paths.mjs';
 
@@ -17,8 +18,6 @@ if (!target) allow();
 const absolute = canonical(target.startsWith('/') ? resolve(target) : resolve(process.cwd(), target));
 const inPath = (root, p) => contains(root, p);
 const home = process.env.HOME || '';
-
-const PLUGIN_ROOT = resolve(join(new URL('.', import.meta.url).pathname, '..'));
 
 const PROTECTED = [
   // Groundtruth's own installed copy. An agent that rewrites the guards, the agents, or the schema

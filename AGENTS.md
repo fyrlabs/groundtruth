@@ -23,7 +23,9 @@ set of repositories, re-checked only where the commit changed. Everything else s
   agent needs a tool it does not currently have, that is a decision entry, not a one-line edit.
 - **No agent holds `Write` or `Edit`.** All nine write through `scripts/write-payload.mjs`, which
   validates before accepting. Granting `Write` reintroduces self-escalation: an injected agent would
-  rewrite the pipeline for the next run.
+  rewrite the pipeline for the next run. Note the limit honestly: an agent that holds `Bash` can still
+  write a file, so withholding `Write` removes the direct path and not the capability.
+  `SECURITY.md` says so, and `meta-reconciler` is the one agent that needs the shell.
 - **Clones stay outside the project tree.** A repository inside a project is loaded as project
   configuration the moment an agent reads a file in it. `core/lib/paths.mjs` keeps the two roots
   separate; there is a test asserting it.
@@ -65,6 +67,11 @@ allowlist that would ship a plugin without its manifest, tools named in a prompt
 
 If you add an agent, a skill, or a script, **extend this file in the same commit.** A new component
 with no invariant is how the next version ships broken.
+
+Three invariants exist specifically because a check once looked implemented and never ran: the
+orchestrator's documented clone location is asserted against `paths.mjs`, its CLI invocations are
+asserted against the implemented subcommands, and every stage `write-payload.mjs` accepts is asserted
+to be validated. A stage that falls through to "ok" is a stage whose shape is unchecked.
 
 ## The artifact matrix
 

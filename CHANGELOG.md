@@ -35,6 +35,48 @@ The pipeline had never run. This release makes it work, and makes it trustworthy
   re-analysis. Now compares commit SHAs read-only, with an explicit `UNKNOWN_DRIFT` that escalates
   instead of guessing.
 
+### Fixed
+
+Found by an adversarial review of the first draft of 0.2.0, and fixed before release. Each was a
+control that appeared to exist and did not:
+
+- **The citation-provenance check was reading a log nothing wrote.** `validate.mjs` had the plumbing
+  for verifying that an agent read the file it cited, and no writer anywhere — so it was dead code, and
+  the central claim of the release rested on it. The `PostToolUse` hook now records each read, and the
+  validator requires a citation to appear in *that agent's* log, failing closed when no log exists.
+- **A cited path could be a directory or an escaping symlink.** `existsSync` is true for directories,
+  and `resolve` is purely lexical, so a symlink inside the clone pointing at `/etc/passwd` satisfied
+  the containment test. Now: regular file, realpath inside the root, `.git` not citable.
+- **The correlation rule compared path strings.** `README.md` and `readme.MD` are one file on a
+  case-insensitive volume, so a model varying capitalisation defeated it. Now compares canonical paths.
+- **Clone refusals reported the wrong file.** `relative()` was called against a bare entry name, so a
+  refusal pointed at a same-named file elsewhere on the machine. The refusal worked; its evidence did not.
+- **The orchestrator was told to clone into the project tree.** `SKILL.md` documented
+  `<state root>/sources`, which is inside the project — the one thing the architecture forbids — and
+  used `owner__repo` where the code derives `owner.repo`. Three new layout invariants assert both
+  contracts against the implementation.
+- **Two orchestrator steps were dead.** `state.mjs registry` and `state.mjs finish` did not exist, and
+  the unknown-subcommand branch exited 0, so the caller saw success. Added, along with
+  `record-manifest`, and the default branch now exits non-zero.
+- **The drift stage was a permanent no-op.** `drift.mjs` read a `manifest.json` that nothing wrote, so
+  it skipped every repository. `clone.mjs` now records the SHA and version it analysed.
+- **Six of seven payload stages were unvalidated.** `write-payload.mjs` fell through to "ok" for
+  everything but `profile` and `analysis`, while the file described itself as the validating gate.
+- **The scrubber corrupted legitimate config files.** The role-spoof pattern consumed a character past
+  the colon, so `user: admin` in a YAML file was rewritten. Anchored to instruction-shaped
+  continuations instead, with emphasis and chained roles still detected.
+- **Every quarantine marker pointed at end-of-file.** `hit[0].index` is `String.prototype.index`, a
+  search method — it was `undefined`. Now `hit.index`, and every span in a run is recorded rather
+  than one per pattern.
+- **A file of zero-width characters expanded 68x on the way out**, turning the clone size cap into a
+  token-exhaustion vector. Runs now collapse to one marker.
+- **The renderer stamped `new Date()` internally**, so the report header and provenance file differed on
+  every run, while the test claiming purity covered only the one function without a timestamp. The
+  clock is now injected, digit grouping is locale-independent, and the test covers `renderReport`.
+- **A path containing a space disabled the whole write guard**, because the plugin root was derived
+  from `URL.pathname` instead of `fileURLToPath`.
+- **`process.env.HOME` was denied as a "dotenv file"** — the `.env` pattern matched the property access.
+
 ### Changed
 
 - Resumability is now real. State is versioned JSON with agent payloads beside their stage markers,
@@ -76,12 +118,13 @@ Repositories are now treated as hostile input throughout.
 
 ### Added
 
-- `scripts/verify-layout.mjs` — 18 layout and packaging invariants. This is the file whose absence
+- `scripts/verify-layout.mjs` — 21 layout and packaging invariants, including the clone-location
+  contract, the orchestrator's CLI surface, and per-stage write validation. This is the file whose absence
   let three separately fatal bugs ship; a new agent, skill, or script must extend it in the same
   commit.
-- 75 tests with no dependencies, including a hostile-repository suite covering output forgery,
-  credential exfiltration, traversal citations, and the command shapes that defeated earlier
-  revisions of the guards.
+- 98 tests with no dependencies, covering a hostile-repository fixture, citation provenance
+  (existence, containment, per-agent read log, correlation by canonical path), credential exfiltration,
+  and the command shapes that defeated earlier revisions of the guards.
 - `report.provenance.json` in W3C PROV-O shape, so every tier can be audited mechanically instead of
   trusted; contradictions are recorded as `invalidated`.
 - `llms.txt` alongside the report.

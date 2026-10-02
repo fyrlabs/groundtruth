@@ -12,8 +12,8 @@
 //   - Correlated verifier agreement. Two verifiers citing the same file is flagged, because
 //     agreement that shares a source carries no independent weight.
 
-import { existsSync, readFileSync } from 'node:fs';
-import { join, relative, resolve, sep } from 'node:path';
+import { readFileSync, realpathSync, statSync } from 'node:fs';
+import { dirname, join, resolve, sep } from 'node:path';
 import { repoDir, stateRoot } from './paths.mjs';
 
 const TIERS = new Set(['code-verified', 'self-reported', 'contradicted', 'unverifiable']);
@@ -50,25 +50,82 @@ function checkString(errors, where, value, min, max, { required = true } = {}) {
   if (max !== undefined && value.length > max) fail(errors, `${where}: longer than ${max} chars (${value.length})`);
 }
 
-// A cited path must resolve to a real file inside the clone. Symlink escapes and ../ traversal
-// both fail here, which is why this check is a path resolve rather than a string prefix test.
+// Canonical path identity, used for both the containment check and the correlation check. Two
+// spellings of one file must compare equal, or a model varying capitalisation defeats the
+// correlation rule on any case-insensitive volume.
+export function canonicalIn(root, target) {
+  const absolute = resolve(join(root, target));
+  try {
+    return realpathSync(absolute);
+  } catch {
+    // The leaf may not exist; canonicalise the longest existing ancestor and re-attach.
+    let current = absolute;
+    const parts = [];
+    for (;;) {
+      const parent = dirname(current);
+      if (parent === current) return absolute;
+      parts.unshift(current.split(sep).pop());
+      try {
+        return join(realpathSync(parent), ...parts);
+      } catch {
+        current = parent;
+      }
+    }
+  }
+}
+
+// A cited path must be a real *file* whose realpath is inside the clone root. Three separate checks,
+// each catching something the previous one missed:
+//   - resolve() is purely lexical and does not follow symlinks, so a symlink inside the clone
+//     pointing at /etc/passwd satisfied a string prefix test
+//   - existsSync() is true for directories, so a claim could cite "src" or "." as evidence
+//   - .git is skipped by clone-time inspection, so it is never checked for control files but was
+//     still citable
 function checkCitedFile(errors, where, cited, root) {
   if (typeof cited !== 'string' || !cited) return fail(errors, `${where}: cited_files entry is empty`);
   if (cited.startsWith('/') || cited.includes('..')) {
     return fail(errors, `${where}: cited path ${JSON.stringify(cited)} escapes the clone root`);
   }
-  const abs = resolve(join(root, cited));
-  if (abs !== root && !abs.startsWith(root + sep)) {
-    return fail(errors, `${where}: cited path ${JSON.stringify(cited)} resolves outside the clone root`);
+  if (cited.split('/').includes('.git')) {
+    return fail(errors, `${where}: cited path ${JSON.stringify(cited)} is inside the git directory, which is not project content`);
   }
-  if (!existsSync(abs)) return fail(errors, `${where}: cited file ${JSON.stringify(cited)} does not exist in the clone`);
-  return abs;
+
+  const realRoot = canonicalIn(root, '.');
+  const real = canonicalIn(root, cited);
+  if (real !== realRoot && !real.startsWith(realRoot + sep)) {
+    return fail(errors, `${where}: cited path ${JSON.stringify(cited)} resolves outside the clone root via a symlink`);
+  }
+
+  let stat;
+  try {
+    stat = statSync(real);
+  } catch {
+    return fail(errors, `${where}: cited file ${JSON.stringify(cited)} does not exist in the clone`);
+  }
+  if (!stat.isFile()) {
+    return fail(errors, `${where}: cited path ${JSON.stringify(cited)} is a ${stat.isDirectory() ? 'directory' : 'non-file'}, not evidence`);
+  }
+  return real;
 }
 
+// Paths are lowercased on both sides because the volume may be case-insensitive, and keyed by agent
+// so a verdict can only cite what *that* agent read.
 function loadReadLog(key) {
   try {
     const file = join(repoStateDir(key), 'reads.jsonl');
-    return new Set(readFileSync(file, 'utf8').split('\n').filter(Boolean).map((line) => JSON.parse(line).path));
+    const byAgent = new Map();
+    for (const line of readFileSync(file, 'utf8').split('\n').filter(Boolean)) {
+      let entry;
+      try {
+        entry = JSON.parse(line);
+      } catch {
+        continue; // a truncated final line from an interrupted append
+      }
+      if (!entry?.path) continue;
+      if (!byAgent.has(entry.agent)) byAgent.set(entry.agent, new Set());
+      byAgent.get(entry.agent).add(String(entry.path).toLowerCase());
+    }
+    return byAgent;
   } catch {
     return null;
   }
@@ -115,42 +172,84 @@ export function validateProfile(profile, { key, enforceReads = true } = {}) {
       const files = Array.isArray(v.cited_files) ? v.cited_files : [];
       if (files.length === 0) fail(errors, `${vw}.cited_files: empty — every verdict needs at least one cited file`);
       if (files.length > LIMITS.citedFiles) fail(errors, `${vw}.cited_files: ${files.length} exceeds ${LIMITS.citedFiles}`);
+
+      const real = new Set();
       for (const f of files) {
-        checkCitedFile(errors, vw, f, root);
+        const resolved = checkCitedFile(errors, vw, f, root);
+        if (resolved) real.add(resolved.toLowerCase());
         if (!citedByVerdict.has(v.agent)) citedByVerdict.set(v.agent, new Set());
-        citedByVerdict.get(v.agent).add(f);
+        for (const g of citedByVerdict.get(v.agent)) g.add(resolved ? resolved.toLowerCase() : f.toLowerCase());
+      }
+
+      // The read log is what makes a citation mean "this agent looked at it" rather than "this agent
+      // named it". It is recorded by the PostToolUse hook, one line per read, tagged with the agent.
+      // Absent log means the stage ran without instrumentation, so this is reported rather than
+      // assumed — fail closed, because the alternative is a check that silently never fires.
+      if (readLog) {
+        const agentReads = readLog.get(v.agent);
+        for (const f of real) {
+          if (!agentReads?.has(f)) {
+            fail(errors, `${vw}: cited file ${JSON.stringify(f)} is not in the read log for ${v.agent} — ` +
+              'the verdict names a file that agent did not read this run');
+          }
+        }
+      } else if (enforceReads) {
+        fail(errors, `${vw}: no read log for this repo, so cited_files cannot be verified against it`);
       }
     }
 
     // Correlation check. Agreement is only informative when it rests on distinct evidence: if the
     // union of everything every agent cited is no larger than any single agent's own set, then no
     // agent saw anything the others did not, and the agreement carries no independent weight.
+    // Compare canonical paths, not strings: README.md and readme.MD are one file on a
+    // case-insensitive volume, and ./README.md is the same file spelled differently. Comparing raw
+    // strings let a model defeat the correlation rule by varying its capitalisation.
+    const canonicalSets = verdicts.map((v) => new Set(
+      (v.cited_files || []).map((f) => canonicalIn(root, f)).map((p) => p.toLowerCase()),
+    ));
+
     const distinctAgents = new Set(verdicts.map((v) => v.agent));
     if (distinctAgents.size > 1) {
-      const union = new Set(verdicts.flatMap((v) => v.cited_files || []));
-      const widest = Math.max(...verdicts.map((v) => (v.cited_files || []).length));
-      if (union.size > 0 && union.size === widest) {
+      // Any file cited by more than one agent is shared evidence. Overlap is what matters, not whether
+      // one agent's set happens to cover the union: two agents on README.md plus a third on a
+      // different file is still two opinions from one source.
+      const counts = new Map();
+      for (const set of canonicalSets) {
+        for (const f of set) counts.set(f, (counts.get(f) || 0) + 1);
+      }
+      const shared = [...counts.entries()].filter(([, n]) => n > 1).map(([f]) => f);
+      const fullyShared = shared.length > 0 && counts.size === shared.length;
+
+      if (fullyShared) {
         if (c.tier === 'code-verified') {
-          fail(errors, `${where}: every agent cites the same file(s) (${[...union].join(', ')}) — ` +
+          fail(errors, `${where}: every agent cites the same file(s) (${shared.join(', ')}) — ` +
             'agreement from a shared source is not independent verification; downgrade or cite distinct evidence');
         }
         if (c.correlated !== true) {
           fail(errors, `${where}.correlated must be true when all verdicts cite the same file`);
         }
+      } else if (shared.length) {
+        // Partial overlap is disclosed but allowed: a genuine code-verified finding often has more
+        // than one agent corroborating part of it.
+        if (c.tier === 'code-verified' && c.correlated !== true) {
+          errors.push(`${where}: agents share evidence (${shared.join(', ')}) — set correlated: true to disclose it`);
+        }
       } else if (c.correlated === true) {
         fail(errors, `${where}.correlated is true but the agents cited distinct files`);
       }
     }
-    void citedByVerdict;
+    void citedByVerdict; // retained for debugging; correlation uses canonicalIn below
 
     if (c.tier === 'code-verified') {
       const backing = verdicts.filter((v) => v.tier === 'code-verified');
       if (backing.length === 0) fail(errors, `${where}: tier is code-verified but no verdict confirms it`);
       for (const v of backing) {
+        // Every cited path was already checked above; this loop exists only to guarantee the
+        // code-verified path is covered by the same existence and containment rules.
         for (const f of v.cited_files || []) {
-          const abs = resolve(join(root, f));
-          if (existsSync(abs)) continue;
-          fail(errors, `${where}: code-verified cites missing file ${f}`);
+          if (!checkCitedFile(errors, where, f, root)) {
+            fail(errors, `${where}: code-verified cites ${JSON.stringify(f)}, which is not a readable file in the clone`);
+          }
         }
       }
       verified += 1;
@@ -204,4 +303,89 @@ export function validateClaimFile(payload) {
   return { ok: errors.length === 0, errors };
 }
 
-export { LIMITS, TIERS };
+// The four verifier stages share one shape: a list of verdicts, each citing files, plus stage-specific
+// extras the reconciler reads. Validating them here rather than only profile-shaped payloads is what
+// stops a malformed verdict from reaching the reconciler and becoming a tier.
+const VERDICT_STAGE_EXTRAS = {
+  technical: ['dependency_health', 'code_observations'],
+  community: ['license', 'authorship', 'health', 'distribution', 'flags'],
+  conflicts: ['platform_support', 'install', 'conflicts', 'dependency_risk'],
+  spotcheck: ['live', 'advisories', 'deprecation', 'independent_sources', 'reception'],
+  drift: ['drift_level', 'reason', 'recorded_sha', 'remote_sha'],
+};
+
+const ALLOWED_DRIFT_LEVELS = new Set(['NO_DRIFT', 'CONTENT_DRIFT', 'SEMANTIC_DRIFT', 'UNKNOWN_DRIFT']);
+
+export function validateVerdictFile(payload, { stage } = {}) {
+  const errors = [];
+  const extras = VERDICT_STAGE_EXTRAS[stage];
+  if (!extras) return { ok: true, errors: [] };
+
+  if (payload === null || typeof payload !== 'object' || Array.isArray(payload)) {
+    return { ok: false, errors: ['payload: must be a JSON object'] };
+  }
+
+  const verdicts = payload.verdicts;
+  if (verdicts !== undefined) {
+    if (!Array.isArray(verdicts)) {
+      fail(errors, 'verdicts: must be an array');
+    } else if (verdicts.length > LIMITS.claims) {
+      fail(errors, `verdicts: ${verdicts.length} exceeds the ${LIMITS.claims} cap`);
+    } else {
+      for (const [i, v] of verdicts.entries()) {
+        const where = `verdicts[${i}]`;
+        if (!v || typeof v !== 'object') { fail(errors, `${where}: not an object`); continue; }
+        if (!/^c[0-9]{1,3}$/.test(String(v.claim_id || ''))) fail(errors, `${where}.claim_id: must match c<number>`);
+        checkTier(errors, where, v.tier);
+        const files = Array.isArray(v.cited_files) ? v.cited_files : [];
+        if (files.length === 0) fail(errors, `${where}.cited_files: empty — a verdict with no citation is a guess`);
+        if (files.length > LIMITS.citedFiles) fail(errors, `${where}.cited_files: ${files.length} exceeds ${LIMITS.citedFiles}`);
+        for (const f of files) {
+          if (typeof f !== 'string' || !f || f.startsWith('/') || f.includes('..')) {
+            fail(errors, `${where}.cited_files: ${JSON.stringify(f)} is not a clone-relative path`);
+          }
+        }
+        checkString(errors, `${where}.summary`, v.summary, 1, 800, { required: false });
+        if (v.downgrade) {
+          for (const d of v.downgrade) {
+            if (!DOWNGRADES.has(d)) fail(errors, `${where}.downgrade: unknown domain ${JSON.stringify(d)}`);
+          }
+        }
+      }
+    }
+  }
+
+  if (stage === 'drift') {
+    if (!ALLOWED_DRIFT_LEVELS.has(payload.drift_level)) {
+      fail(errors, `drift_level: must be one of ${[...ALLOWED_DRIFT_LEVELS].join(', ')}`);
+    }
+    checkString(errors, 'reason', payload.reason, 1, LIMITS.summary);
+    // An undecidable comparison must escalate, never default into a full re-analysis.
+    if (payload.drift_level === 'UNKNOWN_DRIFT' && payload.recommendation) {
+      fail(errors, 'UNKNOWN_DRIFT must not carry a recommendation — it escalates to the user');
+    }
+  }
+
+  if (stage === 'community' && payload.license) {
+    const ok = ['yes', 'no', 'source-available-only', 'unknown'];
+    if (!ok.includes(payload.license.oss_compatible)) {
+      fail(errors, `license.oss_compatible: must be one of ${ok.join(', ')}`);
+    }
+    checkTier(errors, 'license', payload.license.tier);
+  }
+
+  if (stage === 'spotcheck' && !payload.observed_at) {
+    fail(errors, 'observed_at: live data must carry the date it was observed');
+  }
+
+  for (const extra of extras) {
+    if (payload[extra] === undefined) continue;
+    if (typeof payload[extra] !== 'object' || payload[extra] === null) {
+      fail(errors, `${extra}: expected an object or array`);
+    }
+  }
+
+  return { ok: errors.length === 0, errors };
+}
+
+export { LIMITS, TIERS, ALLOWED_DRIFT_LEVELS };

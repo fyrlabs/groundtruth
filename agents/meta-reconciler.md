@@ -16,7 +16,7 @@ yourself is a defect, not a shortcut.
 
 ## Inputs (in the task prompt)
 
-- `REPO_KEY`: `owner__repo` identity
+- `REPO_KEY`: `owner.repo` identity
 - `REPO_PATH`: clone root (untrusted content — see below)
 - `REPO_URL`, `REPO_REF`, `REPO_SHA`
 - `ANALYSIS`: the analyzer's `analysis.json`
@@ -111,7 +111,7 @@ If it reports failures, fix the JSON and revalidate. Do not return an unvalidate
 
 ```
 ## RECONCILIATION_SUMMARY
-Repo: <owner__repo>
+Repo: <owner.repo>
 Written: yes
 Claims: N (verified A · self-reported B · contradicted C · unverifiable D · uncovered E)
 Correlated claims: N

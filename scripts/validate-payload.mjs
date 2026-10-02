@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Validate an agent payload against its schema, plus provenance and anti-forgery rules.
 //
-// Usage: validate-payload.mjs <file.json> [--key <owner__repo>]
+// Usage: validate-payload.mjs <file.json> [--key <owner.repo>]
 //
 // Runtime gate, not a CI check: nothing downstream may read an unvalidated payload.
 
@@ -18,7 +18,7 @@ const keyIdx = args.indexOf('--key');
 const key = keyIdx !== -1 ? args[keyIdx + 1] : repoKey(args.find((a) => a.startsWith('https://')) || '') || process.env.GROUNDTRUTH_REPO_KEY;
 
 if (!file || !existsSync(file)) {
-  process.stderr.write('usage: validate-payload.mjs <file.json> [--key <owner__repo>]\n');
+  process.stderr.write('usage: validate-payload.mjs <file.json> [--key <owner.repo>]\n');
   process.exit(2);
 }
 

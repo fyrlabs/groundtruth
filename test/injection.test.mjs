@@ -103,7 +103,7 @@ export default ({ test, assert }) => {
   });
 
   test('bidi and zero-width characters are detected', () => {
-    assert.ok(scan('safe text ‮gnitpurroc ni noitseuq').some((h) => h.kind === 'hidden-unicode'), 'bidi override missed');
+    assert.ok(scan('safe\u202egnitpurroc ni noitseuq').some((h) => h.kind === 'hidden-unicode'), 'bidi override missed');
     assert.ok(scan('safe\u200btext here').some((h) => h.kind === 'hidden-unicode'), 'zero-width space missed');
   });
 

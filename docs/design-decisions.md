@@ -103,15 +103,28 @@ would say so rather than silently proceeding.
 **Reasoning.** The attack instruction-level defences cannot touch is **output-format forgery**: a
 repository README containing a block shaped like our own output, which an agent matching on that
 shape may copy verbatim. It is *data shaped like output*, not an instruction, so no preamble catches
-it. Making citations load-bearing defeats it — the attacker controls the README, which is the one
-file a verdict cannot legitimately cite. The same invariant defeats hallucinated confirmations.
+it.
+
+Making citations load-bearing defeats it, but existence alone is not enough, and an earlier draft of
+this entry claimed otherwise. The attacker controls **every** file in the clone, so citing the README
+satisfies an existence check and proves nothing. What defeats forgery is requiring a citation to appear
+in **the read log for the agent that made the verdict**: the attacker controls what the README says,
+but not which files an agent actually opened. Existence in the clone plus a per-agent read entry is
+the invariant; either half alone is bypassable. The same pair defeats hallucinated confirmations.
+
+Supporting details that each closed a distinct hole: the cited path must be a regular file (not a
+directory, which `existsSync` accepts, and not a symlink escaping the root, which a lexical `resolve`
+does not follow); `.git` is not citable; and comparison for the correlation rule uses canonical paths,
+because `README.md` and `readme.MD` are one file on a case-insensitive volume.
 
 **Alternatives considered.** Prompt-level defences alone: rejected for the reason above. Markdown
 with delimited sections: rejected, a payload containing the delimiter closes the section and emits
 its own. JSON has a terminator.
 
-**Tradeoff.** Agents cannot express a verdict about something that is not a file in the repo — for
-example a live benchmark number. Those are `unverifiable` with no citation requirement.
+**Tradeoff.** Agents cannot express a verdict about something that is not a file in the repo — a live
+benchmark number, for instance. Those are `unverifiable` and need no citation. And a verdict on a file
+the agent read *for the wrong reason* still passes: the validator proves the read happened, not that
+it was honest.
 
 ## 7. The verifiers have disjoint evidence surfaces
 

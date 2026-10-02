@@ -29,6 +29,17 @@ const PROTECTED_PREFIXES = [
   join(process.env.HOME || '', '.claude', 'hooks'),
 ];
 
+// Credential stores, mirrored from guard-bash. An injected instruction that reads ~/.aws/credentials
+// and then posts it needs no exotic command: Read is enough, and four agents hold WebFetch. The Bash
+// guard cannot see this path at all, so it has to be blocked here or not at all.
+const CREDENTIALS = /^(?:~|\$HOME|\/home\/[^/]+|\/Users\/[^/]+|\/root)\/(?:\.ssh\b|\.aws\/credentials|\.gnupg\b|\.npmrc|\.netrc|\.git-credentials|\.claude\.json|\.docker\/config\.json|\.kube\/config|\.config\/gh\/hosts\.yml)/;
+if (CREDENTIALS.test(target.replace(/\$\{HOME\}/g, '$HOME'))) {
+  logEvent('read-denied-credential', { path: target, tool });
+  deny('Blocked: this is a credential store. Groundtruth reads repositories, not the user\'s keys, ' +
+    'tokens, or cloud credentials. An agent holding Read plus WebFetch could otherwise be induced to ' +
+    'read a secret and transmit it, and no pattern list can distinguish that from a legitimate read.');
+}
+
 const absolute = canonical(target.startsWith('/') ? resolve(target) : resolve(process.cwd(), target));
 const inPath = (root, p) => {
   const r = canonical(root);

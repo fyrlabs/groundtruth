@@ -1,11 +1,12 @@
 // The report is generated from state, so a render must be pure: same state in, same bytes out.
 // That property is what makes concurrent runs and re-renders safe, so it is tested directly.
 
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync, mkdirSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { renderProfile, buildProvenance, buildLlmsTxt } from '../core/lib/render.mjs';
+import { renderReport, renderProfile, buildProvenance, buildLlmsTxt } from '../core/lib/render.mjs';
 import { writeJson } from '../core/lib/state.mjs';
+import { paths } from '../core/lib/paths.mjs';
 
 function profile(overrides = {}) {
   return {
@@ -108,6 +109,55 @@ export default ({ test, assert }) => {
 
   test('rendering is pure — identical input yields identical bytes', () => {
     assert.equal(renderProfile(profile()), renderProfile(profile()));
+  });
+
+  test('the whole render is a pure function of state and the clock', () => {
+    // The earlier version stamped new Date() inside the renderer, so the report header and the
+    // provenance file differed on every run while the test that "proved" purity covered only
+    // renderProfile — the one function with no timestamp in it.
+    const dir = mkdtempSync(join(tmpdir(), 'gt-render-'));
+    const prev = { state: process.env.GROUNDTRUTH_STATE_DIR, clones: process.env.GROUNDTRUTH_CLONE_DIR };
+    process.env.GROUNDTRUTH_STATE_DIR = dir;
+    process.env.GROUNDTRUTH_CLONE_DIR = join(dir, 'clones');
+    // The renderer validates before writing, and validation checks cited files exist in the clone —
+    // so the fixture needs a real one.
+    const clone = join(dir, 'clones', 'acme.tool');
+    mkdirSync(clone, { recursive: true });
+    for (const name of ['README.md', 'SECURITY.md', 'install.js', 'LICENSE']) {
+      writeFileSync(join(clone, name), 'x\n');
+    }
+    mkdirSync(join(clone, 'agents'), { recursive: true });
+    mkdirSync(join(clone, 'src'), { recursive: true });
+    try {
+      const p = profile();
+      // Claims cite files that must exist for the render to proceed at all.
+      p.claims[0].cited_files = ['README.md'];
+      p.claims[0].verdicts[0].cited_files = ['README.md'];
+      p.coverage = { claims_total: 2, verified: 1, self_reported: 1, contradicted: 0, unverifiable: 0, uncovered: 0 };
+      writeJson(join(paths.reposDir(), 'acme.tool', 'profile.json'), p);
+      const read = () => readFileSync(join(paths.outputDir(), 'groundtruth-report.md'), 'utf8');
+
+      renderReport({ now: new Date('2026-10-01T00:00:00Z') });
+      const first = read();
+      renderReport({ now: new Date('2026-10-01T00:00:00Z') });
+      assert.equal(read(), first, 'a re-render at the same instant changed the report');
+
+      renderReport({ now: new Date('2026-10-02T00:00:00Z') });
+      const provenance = readFileSync(join(paths.outputDir(), 'report.provenance.json'), 'utf8');
+      assert.match(provenance, /2026-10-02/, 'the provenance timestamp did not follow the injected clock');
+    } finally {
+      for (const k of ['GROUNDTRUTH_STATE_DIR', 'GROUNDTRUTH_CLONE_DIR']) {
+        if (prev[k] === undefined) delete process.env[k];
+        else process.env[k] = prev[k];
+      }
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test('number formatting does not depend on the host locale', () => {
+    const p = profile();
+    p.health.stars = 1234567;
+    assert.match(renderProfile(p), /1,234,567/, 'digits were not grouped deterministically');
   });
 
   test('provenance output is machine-readable and cites files', () => {

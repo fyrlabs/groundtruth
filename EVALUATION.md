@@ -24,13 +24,16 @@ This is the pre-registered harness for that, plus the results as they stand.
 ## Deterministic checks (CI, no model)
 
 These are not "the model seemed to behave". They are invariants that either hold or do not, and they
-run on every commit. Results as of v0.2.0: **85 tests passing, 18/18 layout invariants.**
+run on every commit. Results as of v0.2.0: **98 tests passing, 21/21 layout invariants.**
 
 | Invariant | Where | Count |
 |---|---|---|
 | Instruction override, role spoof, output forgery, hidden unicode detected | `test/injection.test.mjs` | 8 patterns |
 | A hostile fixture repo is refused, for the control-file reason | `test/hostile-fixture.test.mjs` | 1 fixture, 4 signals |
-| A forged verdict citing an unread or non-existent file is rejected | `test/injection.test.mjs` | 6 cases |
+| A forged verdict citing an unread or non-existent file is rejected | `test/injection.test.mjs`, `test/readlog.test.mjs` | 14 cases |
+| A directory, an escaping symlink, or `.git` cannot be cited as evidence | `test/readlog.test.mjs` | 5 cases |
+| A citation is checked against the agent that made it, not any agent | `test/readlog.test.mjs` | 1 case |
+| Capitalisation cannot defeat the correlation rule | `test/readlog.test.mjs` | 1 case |
 | Three agents citing one file cannot be `code-verified` | `test/injection.test.mjs` | 2 cases |
 | Repo-controlled text cannot forge table rows or hide from review | `test/render.test.mjs` | 3 cases |
 | Guards block the shapes that defeated earlier revisions | `test/hooks.test.mjs` | 12 cases |
@@ -100,6 +103,7 @@ node scripts/evaluate.mjs --fixture test/fixtures/known-claims-repo
 ```bash
 npm test                  # all deterministic checks
 npm test hostile-fixture  # the injection fixture specifically
+npm test readlog          # the citation-provenance suite specifically
 npm run verify            # + layout and frontmatter invariants
 ```
 

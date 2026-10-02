@@ -179,7 +179,7 @@ export function nextStepFor(state) {
   if (state.status === 'IDLE') return 'Start a run: /groundtruth:analyze <url> or /groundtruth:analyze with no arguments for discovery.';
   if (state.status === 'AWAITING_APPROVAL') return 'Ask the user to approve the analysis queue, then: state.mjs approve';
   if (state.status === 'IN_ANALYSIS') return 'Dispatch the analysis stages for each queued repo (see skills/analyze/SKILL.md Step 5).';
-  if (state.status === 'RECONCILING') return 'Dispatch the meta-reconciler per repo, then render.mjs <owner__repo>.';
+  if (state.status === 'RECONCILING') return 'Dispatch the meta-reconciler per repo, then render.mjs <owner.repo>.';
   if (state.status === 'FAILED') return 'Show the errors and ask whether to retry or skip the failed stage.';
   return 'Complete — start a new run or re-render with render.mjs --all.';
 }

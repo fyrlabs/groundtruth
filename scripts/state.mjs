@@ -1,13 +1,34 @@
 #!/usr/bin/env node
 // Run state CLI. The orchestrator never edits state files by hand.
 
+import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { ensureStateRoot, paths } from '../core/lib/paths.mjs';
 import {
   emptyState, activeRunDir, loadState, saveState, startRun, nextStepFor, logError,
-  readRepoStage, readPayload, writePayload, setRepoStage, repoProgress,
+  readPayload, setRepoStage, repoProgress, writeJson,
 } from '../core/lib/state.mjs';
 
 ensureStateRoot();
+
+function readProfile(key) {
+  try {
+    return JSON.parse(readFileSync(join(paths.reposDir(), key, 'profile.json'), 'utf8'));
+  } catch {
+    return null;
+  }
+}
+
+// The SHA a repo was analysed at. drift.mjs reads this; without it every repo is skipped and the
+// drift stage is a permanent no-op, which is how "never re-analysed unless the commit changed" was
+// silently unimplemented.
+function writeManifest(key, record) {
+  const dir = join(paths.reposDir(), key);
+  mkdirSync(dir, { recursive: true });
+  writeJson(join(dir, 'manifest.json'), record);
+}
+
+
 
 const [cmd, ...rest] = process.argv.slice(2);
 const flag = (name) => {
@@ -97,20 +118,95 @@ switch (cmd) {
     break;
   }
 
+  case 'registry': {
+    // The classifier needs the known-repo set to separate new from drift-check. Derived from the
+    // profiles on disk rather than a hand-maintained file, so it cannot drift from reality.
+    const repos = existsSync(paths.reposDir()) ? readdirSync(paths.reposDir()) : [];
+    const known = [];
+    for (const key of repos) {
+      const profile = readProfile(key);
+      if (!profile?.repo?.url) continue;
+      known.push({
+        key,
+        url: profile.repo.url,
+        owner: profile.repo.owner,
+        name: profile.repo.name,
+        status: profile.health?.status || 'unknown',
+        license: profile.license?.actual || null,
+        last_analyzed: profile.analyzed_at?.slice(0, 10) || null,
+        sha: profile.repo.sha || null,
+        summary: profile.prose?.what_it_does || null,
+      });
+    }
+    if (rest.includes('--json')) {
+      process.stdout.write(`${JSON.stringify({ repos: known }, null, 2)}\n`);
+    } else {
+      process.stdout.write(`${known.length} known repo(s)\n`);
+      for (const r of known) process.stdout.write(`  ${r.key.padEnd(28)} ${String(r.status).padEnd(20)} ${r.last_analyzed || '-'}  ${r.summary ? r.summary.slice(0, 60) : ''}\n`);
+    }
+    break;
+  }
+
+  case 'record-manifest': {
+    const [key, sha, version = '', ref = ''] = rest.filter((r) => !r.startsWith('--'));
+    if (!key || !sha) {
+      process.stderr.write('usage: state.mjs record-manifest <owner.repo> <sha> [version] [ref]\n');
+      process.exit(1);
+    }
+    writeManifest(key, { sha, version, ref, recorded_at: new Date().toISOString() });
+    process.stdout.write(`recorded ${key}@${String(sha).slice(0, 12)}\n`);
+    break;
+  }
+
+  case 'finish': {
+    const state = loadState();
+    if (state.status === 'IDLE' || !state.run_id) {
+      process.stderr.write('no run in progress\n');
+      process.exit(1);
+    }
+    state.status = 'COMPLETE';
+    state.next_step = 'Complete — start a new run or re-render with render.mjs --all.';
+    saveState(state);
+    process.stdout.write(`run ${state.run_id} marked COMPLETE\n`);
+    break;
+  }
+
   case 'reset': {
     if (!rest.includes('--yes')) {
       process.stderr.write(`refusing to delete state at ${paths.runsDir()} without --yes\n`);
       process.exit(1);
     }
-    const { rmSync } = await import('node:fs');
     rmSync(paths.runsDir(), { recursive: true, force: true });
     rmSync(paths.reposDir(), { recursive: true, force: true });
     ensureStateRoot();
+
+function readProfile(key) {
+  try {
+    return JSON.parse(readFileSync(join(paths.reposDir(), key, 'profile.json'), 'utf8'));
+  } catch {
+    return null;
+  }
+}
+
+// The SHA a repo was analysed at. drift.mjs reads this; without it every repo is skipped and the
+// drift stage is a permanent no-op, which is how "never re-analysed unless the commit changed" was
+// silently unimplemented.
+function writeManifest(key, record) {
+  const dir = join(paths.reposDir(), key);
+  mkdirSync(dir, { recursive: true });
+  writeJson(join(dir, 'manifest.json'), record);
+}
+
+
     process.stdout.write('state cleared\n');
     break;
   }
 
   default:
-    process.stderr.write(`usage: state.mjs <show|start|approve|fail|stage|payload|progress|reset>\n`);
-    process.exit(1);
+    // Non-zero, so a caller invoking a subcommand that does not exist sees failure rather than
+    // treating the usage message as success. Two orchestrator steps were silently dead because of
+    // this exit code.
+    process.stderr.write(`unknown subcommand: ${cmd}\n`);
+    process.stderr.write('usage: state.mjs <show|start|approve|fail|stage|payload|progress|registry|record-manifest|finish|reset>\n');
+    process.exit(2);
 }

@@ -35,6 +35,10 @@ const LEVEL_LABEL = {
 // from a human reviewer, flatten newlines so a claim cannot forge table rows, and escape pipes.
 const HIDDEN = /[\u200B-\u200F\u2028\u2029\u202A-\u202E\u2060-\u2064\uFEFF]/g;
 
+function groupDigits(n) {
+  return String(n).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+}
+
 function clean(text) {
   return String(text ?? '').replace(HIDDEN, '');
 }
@@ -60,7 +64,9 @@ function renderProfile(profile) {
   const ref = repo.ref ? ` @ \`${esc(repo.ref)}\`` : '';
   const sha = repo.sha ? ` (\`${esc(repo.sha.slice(0, 12))}\`)` : '';
   out.push(`${status} · analyzed ${esc(profile.analyzed_at?.slice(0, 10))}${ref}${sha} · license **${esc(license.actual || 'unknown')}** ${TIER_ICON[license.tier] || ''}`);
-  if (health.stars != null) out.push(`Stars: ${health.stars.toLocaleString()} (observed ${esc(health.stars_observed_at || 'unknown')})`);
+  // Grouped digits via a fixed locale: toLocaleString() without a locale varies with the host's
+  // settings, which is one way a "deterministic" renderer stops being byte-identical.
+  if (health.stars != null) out.push(`Stars: ${groupDigits(health.stars)} (observed ${esc(health.stars_observed_at || 'unknown')})`);
   out.push('');
 
   out.push(`#### What it does`);
@@ -158,8 +164,11 @@ function renderProfile(profile) {
   return out.join('\n');
 }
 
-function reportHeader(state, profiles) {
-  const generated = new Date().toISOString().slice(0, 10);
+// The clock is a parameter so a render is a pure function of (state, now). A test can then assert
+// byte-identical output across two dates, which is the actual claim — the earlier version stamped
+// new Date() inside the renderer, so the report header and the provenance file were never stable and
+// the test that "proved" purity exercised only the one function with no timestamp in it.
+function reportHeader(state, profiles, generated) {
   const counts = { verified: 0, contradicted: 0, uncovered: 0 };
   for (const p of profiles) {
     counts.verified += p.coverage?.verified ?? 0;
@@ -295,10 +304,11 @@ export function listProfiles() {
     const profile = readJson(join(dir, key, 'profile.json'), null);
     if (profile) out.push(profile);
   }
-  return out.sort((a, b) => String(a.repo.key).localeCompare(String(b.repo.key)));
+  // Plain codepoint comparison, not localeCompare: sorting must not depend on the host locale.
+  return out.sort((a, b) => (a.repo.key < b.repo.key ? -1 : a.repo.key > b.repo.key ? 1 : 0));
 }
 
-export function renderReport({ keys = null } = {}) {
+export function renderReport({ keys = null, now = new Date() } = {}) {
   const state = readJson(join(paths.runsDir(), 'active', 'state.json'), { run_id: null });
   const synthesis = readJson(join(paths.stateRoot(), 'run.json'), null);
   let profiles = listProfiles();
@@ -315,7 +325,7 @@ export function renderReport({ keys = null } = {}) {
   }
 
   const body = [
-    reportHeader(state, profiles),
+    reportHeader(state, profiles, now.toISOString().slice(0, 10)),
     ...profiles.map((p) => `${renderProfile(p)}\n\n---\n\n`),
     renderComparison(synthesis),
     renderMethodology(profiles),
@@ -331,16 +341,16 @@ export function renderReport({ keys = null } = {}) {
 
   mkdirSync(paths.outputDir(), { recursive: true });
   writeFileSync(reportPath(), body, 'utf8');
-  writeFileSync(join(paths.outputDir(), 'report.provenance.json'), `${JSON.stringify(buildProvenance(profiles), null, 2)}\n`, 'utf8');
+  writeFileSync(join(paths.outputDir(), 'report.provenance.json'), `${JSON.stringify(buildProvenance(profiles, now), null, 2)}\n`, 'utf8');
   writeFileSync(join(paths.outputDir(), 'llms.txt'), buildLlmsTxt(profiles), 'utf8');
   return { path: reportPath(), repos: profiles.length };
 }
 
 // W3C PROV-O shaped, so a reader can mechanically audit every tier rather than trusting a symbol.
-export function buildProvenance(profiles) {
+export function buildProvenance(profiles, now = new Date()) {
   return {
     schema: 'groundtruth/provenance/1',
-    generated_at: new Date().toISOString(),
+    generated_at: now.toISOString(),
     entities: profiles.flatMap((p) => p.claims.map((c, i) => ({
       id: `${p.repo.key}/claim/${i}`,
       type: 'Claim',

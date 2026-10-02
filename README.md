@@ -67,9 +67,12 @@ input is hostile by default. Four layers, in the order of what they actually buy
    output-format forgery, which no instruction-level defence can touch: a README containing a block
    shaped like Groundtruth's own output is *data shaped like output*, not an instruction.
 3. **Hooks** — guards block fetch-and-execute, credential reads, clone mutation, and writes to
-   harness configuration including Groundtruth's own installed copy.
+   harness configuration including Groundtruth's own installed copy. One agent holds `Bash`, and that
+   is a real limitation rather than a solved problem: a shell can write a file whatever tools an agent
+   holds. `SECURITY.md` says so plainly and names the opt-in mitigation.
 4. **Optional guardrails** — `node scripts/install-guardrails.mjs` writes permission deny rules and
-   sandbox settings that a plugin is not permitted to ship.
+   sandbox settings that a plugin is not permitted to ship. Apply these if the Bash limitation matters
+   to you.
 
 **Hooks are advisory.** A `.claude/settings.json` in your working directory can set
 `disableAllHooks` and turn them off, which is exactly why the structural layer carries the guarantee.
@@ -159,12 +162,17 @@ the pipeline.
 - **[Surface](https://github.com/Connorrmcd6/surface)** — keeps one repository's docs from going
   stale via tree-sitter symbol fingerprints, enforced in CI. The better answer for that problem; our
   drift check is a commit-SHA comparison in the same spirit.
-- **[sahanaa0420/groundtruth](https://github.com/sahanaa0420/groundtruth)** and
-  **[vnmoorthy/groundtruth](https://github.com/vnmoorthy/groundtruth)** — same name, different
-  problem. Both gate an agent's own completion claims; neither analyses third-party repositories.
+- **[sahanaa0420/groundtruth](https://github.com/sahanaa0420/groundtruth)** — a research-sourcing
+  discipline for Claude Code: primary sources, traceable claims, and a fan-out of `research-leg`
+  subagents. It ships an `EVALUATION.md` reporting a null result, which is a better habit than most.
+  It verifies *general research*, not third-party repositories.
+- **[vnmoorthy/groundtruth](https://github.com/vnmoorthy/groundtruth)** — a Stop hook that refuses to
+  let the agent end a turn on an untested completion claim, tuned against a 1,272-turn corpus. It
+  audits the agent's *own* behaviour.
 
-The projects named "groundtruth" are self-audit gates. This one clones third-party repositories and
-checks their claims against implementation code.
+Both constrain what an agent may assert about itself. Neither clones a third-party repository and
+adjudicates that repository's claims. That is the difference, and it is the reason neither of them
+needs a validator, a clone step, or a provenance graph.
 
 ## Honest limitations
 

@@ -7,8 +7,8 @@
 // cloning outside the project tree, refusing control files, agent tool grants, and validator
 // enforcement — are the real boundary, and these hooks are defence in depth on top of them.
 
-import { appendFileSync, mkdirSync, readFileSync } from 'node:fs';
-import { dirname, join, resolve } from 'node:path';
+import { appendFileSync, mkdirSync, readFileSync, realpathSync } from 'node:fs';
+import { dirname, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -86,6 +86,44 @@ export function logEvent(kind, data) {
     appendFileSync(join(dir, 'hooks.jsonl'), `${JSON.stringify({ kind, at: new Date().toISOString(), ...data })}\n`);
   } catch {
     // Auditing must never break a tool call.
+  }
+}
+
+// The read log is what makes a citation mean "this agent looked at it" rather than "this agent named
+// it" — the validator rejects any cited file that is not recorded here for that agent. Written here
+// because the hook sees every read regardless of which tool performed it.
+export function recordRead(payload) {
+  try {
+    const input = payload.tool_input || {};
+    const raw = input.file_path || input.path || input.notebook_path || input.pattern || '';
+    if (!raw) return;
+    const absolute = resolve(String(raw));
+    const clone = cloneRoot();
+    if (absolute !== clone && !absolute.startsWith(clone + sep)) return;
+
+    // Convert back to the clone-relative, canonical spelling the validator will look for.
+    const rel = relative(clone, absolute);
+    const key = process.env.GROUNDTRUTH_REPO_KEY;
+    if (!key) return;
+
+    const dir = join(stateRoot(), 'repos', key);
+    mkdirSync(dir, { recursive: true });
+    // realpath: /tmp and /private/tmp name the same file, and the validator canonicalises before
+    // comparing, so the log has to carry the canonical spelling.
+    let canonicalPath = absolute;
+    try {
+      canonicalPath = realpathSync(absolute);
+    } catch {
+      // A read of a path that no longer exists still gets logged; canonicalIn will simply not match.
+    }
+    appendFileSync(join(dir, 'reads.jsonl'), `${JSON.stringify({
+      agent: payload.agent_type || payload.agent_id || 'unknown',
+      path: canonicalPath,
+      tool: payload.tool_name || '',
+      at: new Date().toISOString(),
+    })}\n`);
+  } catch {
+    // Recording must never break a tool call.
   }
 }
 

@@ -11,7 +11,7 @@
 import { readFileSync } from 'node:fs';
 import { basename } from 'node:path';
 import { ensureStateRoot, repoStateDir } from '../core/lib/paths.mjs';
-import { validateProfile, validateClaimFile } from '../core/lib/validate.mjs';
+import { validateProfile, validateClaimFile, validateVerdictFile } from '../core/lib/validate.mjs';
 import { writeJson } from '../core/lib/state.mjs';
 import { setRepoStage } from '../core/lib/state.mjs';
 
@@ -40,12 +40,21 @@ try {
   process.exit(1);
 }
 
-// Structural check first: the shape that makes a payload meaningful for its stage.
+// Every stage is validated. A stage that fell through to "ok" was a stage whose payload shape was
+// never checked, so six of the seven non-profile stages accepted anything at all.
+const VALIDATED_STAGES = new Set(['analysis', 'technical', 'community', 'conflicts', 'spotcheck', 'drift', 'profile']);
+
+if (!VALIDATED_STAGES.has(stage)) {
+  process.stderr.write(`unknown stage: ${stage}. Known: ${[...VALIDATED_STAGES].join(', ')}\n`);
+  process.exit(2);
+}
+
+// enforceReads on: the write is the moment the read log still corresponds to this run.
 const result = stage === 'profile'
-  ? validateProfile(payload, { key, enforceReads: false })
+  ? validateProfile(payload, { key, enforceReads: true })
   : stage === 'analysis'
     ? validateClaimFile(payload)
-    : { ok: true, errors: [] };
+    : validateVerdictFile(payload, { stage });
 
 if (!result.ok) {
   process.stderr.write(`rejected: ${stage} payload failed validation\n`);

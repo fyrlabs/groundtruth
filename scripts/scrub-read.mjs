@@ -13,7 +13,7 @@
 // a file the agent did not read.
 
 import { scrub } from '../core/lib/injection.mjs';
-import { allow, logEvent, readStdin, replaceOutput, toolInputPath } from './hook-lib.mjs';
+import { allow, logEvent, readStdin, recordRead, replaceOutput, toolInputPath } from './hook-lib.mjs';
 
 const payload = await readStdin();
 const { tool_response: response = '', tool_name: tool = '' } = payload;
@@ -21,6 +21,10 @@ const path = String(toolInputPath(payload.tool_input || {}) || '');
 
 // A hook with nothing to inspect must stay silent. Matching empty input would fire a security
 // notice on every tool call, train the reader to scroll past it, and make the real one useless.
+// Record before deciding anything: a read that produced no output, or that was quarantined, was
+// still a read, and a citation pointing at it must be verifiable.
+recordRead(payload);
+
 const text = typeof response === 'string' ? response : '';
 if (!tool || !text) allow();
 

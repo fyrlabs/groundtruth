@@ -28,7 +28,8 @@ const SECRET_PATTERNS = [
   // flag or quoting in between. Anchoring on the leading command let `cat ~/.ssh/id_rsa` through.
   // The secret path itself, so it is caught wherever the command mentions it — including archive
   // tools that name a whole directory rather than a single key file.
-  { re: /(?:^|[\s"'`(=|;|&])(?:~\/|\$HOME\/|\/home\/[^/]+\/|\/Users\/[^/]+\/)?(?:\.ssh\b|\.aws\/credentials|\.gnupg\b|\.npmrc|\.netrc|\.git-credentials|\.claude\.json|\.config\/gh\/hosts\.yml|\.docker\/config\.json|\.kube\/config)(?:\b|\/|$)/, why: 'accessing a credential store' },
+  // Covers ~, $HOME, ${HOME}, and absolute paths for any user, including /root.
+  { re: /(?:^|[\s"'`(=|;&/])(?:~|\$HOME|\$\{HOME\}|\/home\/[^/]+|\/Users\/[^/]+|\/root)(?:\/|(?=[\s"'`;|&)]))[^\s"'`|;&]*\.ssh\b|(?:^|[\s"'`(=|;&/])(?:~|\$HOME|\$\{HOME\}|\/home\/[^/]+|\/Users\/[^/]+|\/root)(?:\/|(?=[\s"'`;|&)]))[^\s"'`|;&]*\.(?:aws\/credentials|gnupg|npmrc|netrc|git-credentials|claude\.json|docker\/config\.json|kube\/config|config\/gh\/hosts\.yml)(?:\b|\/|$)/, why: 'accessing a credential store' },
   { re: /(?:^|[\s"'`(=|;&])[^\n]*\.env(?:\.[a-z]+)?(?:\b|["'`\s])/i, why: 'reading a dotenv file' },
   { re: /\b(?:curl|wget|nc|ncat|telnet)\b[^\n]*(?:\/dev\/tcp\/|\$\(|`)/i, why: 'network access with command substitution' },
   // Any interpreter, not just sh: `| python3` and `| node` fetch-and-run just as effectively.
@@ -42,6 +43,13 @@ const SECRET_PATTERNS = [
   { re: /\b(?:mkfs|fdisk|parted|diskutil\s+(?:erase|partition))\b|\bof=\/dev\//, why: 'writing directly to a block device' },
   { re: /\bdd\b[^\n]*\bof=/, why: 'writing directly to a device or file with dd' },
   { re: /\bhistory\s+-c\b|\b(?:unset|unsetenv)\s+HISTFILE\b/, why: 'clearing shell history' },
+  // An interpreter can write any file, so it subsumes every write guard in this file. Denying the
+  // interpreters outright is blunt but honest: a command-text denylist cannot otherwise tell
+  // `node -e "write a skill"` from `node -e "read a file"`, and one interpreter left open defeats all
+  // of it. Legitimate pipeline work goes through the scripts in scripts/, which is why this is
+  // limited to inline-code forms (`-e`, `-c`) rather than `node script.mjs`.
+  { re: /\b(?:python3?|node|ruby|perl|php)\b[^\n]{0,40}\s-[ec]\s/, why: 'running inline interpreter code, which can write any file' },
+  { re: /\bbase64\b[^\n|]*\|\s*(?:ba)?sh\b|\becho\b[^\n|]*\|\s*base64\s+-d\b/, why: 'decoding and executing encoded payloads' },
 ];
 
 for (const { re, why } of SECRET_PATTERNS) {
@@ -75,7 +83,9 @@ if (touchesClone && MUTATING.test(command)) {
 
 // Writes into system or user configuration paths, whichever shell form is used. The previous
 // pattern required a leading space before the path, so `echo x >/etc/passwd` slipped through.
-const SYSTEM_WRITE = /(?:^|[\s"'`>|;&(])(?:~\/|\$HOME\/|\/etc\/|\/usr\/|\/bin\/|\/sbin\/|\/opt\/|\/private\/etc|\/var\/)(?:[^\s"'`|;&]*)/;
+// Path prefixes that mean "not the user's project". ${HOME} is included because shell brace syntax
+// writes a real file, and requiring a leading space before the path let `echo x >/etc/passwd` through.
+const SYSTEM_WRITE = /(?:^|[\s"'`>|;&(])(?:~|\$HOME|\$\{HOME\}|\/etc|\/usr|\/bin|\/sbin|\/opt|\/private\/etc|\/var|\/root|\/Users)(?:\/|$)/;
 const WRITE_VERB = /\b(?:rm|mv|cp|chmod|chown|ln|mkdir|tee|dd|install|touch|chmod)\b|(?:^|[\s])[>]\s*\S|(?:^|[\s])>>?\s*\S/;
 if (SYSTEM_WRITE.test(command) && WRITE_VERB.test(command)) {
   logEvent('bash-denied-system-write', { command: command.slice(0, 200) });
@@ -86,8 +96,23 @@ if (SYSTEM_WRITE.test(command) && WRITE_VERB.test(command)) {
 
 // Git operations against a clone. `git pull` there runs with the user's real Git identity on an
 // untrusted remote, and `push`/`set-url` would point a clone at an attacker's server.
-if (/\bgit\b[^\n]*\b(?:pull|push|fetch|clone|submodule\s+update|remote\s+(?:add|set-url|remove))\b/.test(command)) {
-  if (touchesClone || /\bpush\b|\bset-url\b/.test(command)) {
+// Only a read-only subset of git is ever legitimate against a clone. The mutating verbs matter even
+// more than push/pull: `git config core.pager` is arbitrary code execution, and `checkout`/`reset`/
+// `clean` move the tree under the analyzers so two agents read different bytes of one file.
+const GIT_READONLY = /^(?:log|show|rev-parse|ls-files|ls-tree|cat-file|describe|status|diff|blame|grep|shortlog|rev-list|for-each-ref|var|count-objects)$/;
+if (/\bgit\b/.test(command) && (touchesClone || /\bpush\b|\bset-url\b/.test(command))) {
+  // Skip global options and their arguments; `-C <path>` consumes the path, so the token after it
+  // is not the subcommand.
+  const tokens = command.split(/\s+/).filter(Boolean);
+  let i = tokens.indexOf('git') + 1;
+  while (i < tokens.length) {
+    const t = tokens[i];
+    if (t === '-C' || t === '--git-dir' || t === '--work-tree' || t === '-c') { i += 2; continue; }
+    if (t.startsWith('-')) { i += 1; continue; }
+    break;
+  }
+  const subcommand = tokens[i] || '';
+  if (!GIT_READONLY.test(subcommand)) {
     logEvent('bash-denied-git', { command: command.slice(0, 200) });
     deny('Blocked: use scripts/clone.mjs and scripts/drift.mjs for git operations. They clone shallow ' +
       'and read the remote with ls-remote, which needs no credentials — a `git pull` on an untrusted ' +

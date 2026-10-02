@@ -42,15 +42,21 @@ node ${CLAUDE_PLUGIN_ROOT}/scripts/paths.mjs
 | What | Where | Lifetime |
 |---|---|---|
 | This plugin's files | `${CLAUDE_PLUGIN_ROOT}` | read-only, updated with the plugin |
-| Run state, registry, reports | `${CLAUDE_PLUGIN_DATA}` or `<project>/.claude/groundtruth/` | persists, yours |
-| Cloned repos | `<state root>/sources/<owner>__<repo>` | disposable, gitignored |
+| Run state, payloads, reports | `${GROUNDTRUTH_STATE_DIR:-<project>/.claude/groundtruth}` | persists, yours, git-ignored |
+| Cloned repos | `${GROUNDTRUTH_CLONE_DIR:-$HOME/.cache/groundtruth/sources}` | disposable, **outside any project** |
 
-State root resolution, highest priority first: `GROUNDTRUTH_STATE_DIR` env → the project state dir
-if one exists → `${CLAUDE_PLUGIN_DATA}/groundtruth`. Print it once at the start of the run so the
-user can see where output lands.
+**Clones are never inside a project.** A repository in the project tree is loaded as project
+configuration — its `CLAUDE.md`, `AGENTS.md`, and `.claude/skills/` become instructions the moment an
+agent reads a file there. `clone.mjs` writes to `cloneRoot()`, which is separate from `stateRoot()` by
+construction. Never relocate a clone into the state root to "tidy things up".
 
-Repo identity is always `owner__repo` — never the bare repo name. `acme/tool` and `other/tool` are
-different repos and must not share a directory.
+Repo identity is always `owner.repo` (one dot) — never the bare repo name, and never `owner.repo`.
+`acme/tool` and `other/tool` are different repos and must not share a directory. `paths.mjs` derives
+this; ask it rather than constructing a path by hand:
+
+```bash
+node ${CLAUDE_PLUGIN_ROOT}/scripts/paths.mjs --json <url>   # prints state_root, clone root, repo_key, repo_dir
+```
 
 ## Pipeline
 
@@ -225,7 +231,7 @@ before writing a negative profile.** Then dispatch `groundtruth:meta-reconciler`
 from the JSON's `prose` fields; the reconciler never writes the report itself.
 
 ```bash
-node ${CLAUDE_PLUGIN_ROOT}/scripts/render.mjs <owner__repo>
+node ${CLAUDE_PLUGIN_ROOT}/scripts/render.mjs <owner.repo>
 ```
 
 One repo at a time. The renderer is the only writer of the report — that is what makes concurrent

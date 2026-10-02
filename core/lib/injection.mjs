@@ -19,9 +19,18 @@
 const PATTERNS = [
   { kind: 'instruction-override', re: /\b(?:ignore|disregard|forget|override)\b[^.\n]{0,40}\b(?:previous|prior|above|earlier|all)\b[^.\n]{0,20}\b(?:instruction|prompt|rule|direction)s?\b/i },
   { kind: 'instruction-override', re: /\b(?:new|updated|revised)\s+(?:instruction|directive|rule)s?\s*:/i },
-  // Any of the four role markers at line start, followed by instruction-shaped language. Anchoring
-  // the alternation too tightly missed "system: assistant: ...", which is the same attack.
-  { kind: 'role-spoof', re: /^\s*(?:system|assistant|user|developer)\s*:\s*\S/im },
+  // A role marker at line start, but only when what follows reads as an instruction. Requiring any
+  // non-space character after the colon matched ordinary `user:` and `system:` keys in YAML, protobuf,
+  // INI and shell, so the scrubber corrupted legitimate config files it was supposed to be preserving.
+  // Leading markdown emphasis is allowed because a README heading or bold is the natural way to phrase
+  // the attack.
+  // Markdown emphasis inside the marker is common in a README, so allow `**`/`*`/`_` around it; allow
+  // at most one extra colon-separated role ("system: assistant: ...") since that is the same attack.
+  // Emphasis may wrap the marker on either side (`**system**: ignore …`), and at most one extra
+  // role may be chained (`system: assistant: …`), which is the same attack. "admin" is deliberately
+  // absent: `user: admin` is ordinary configuration, and flagging it corrupts the evidence the
+  // pipeline exists to preserve.
+  { kind: 'role-spoof', re: /^[ \t>*_#-]{0,4}\*?\*?\s*(?:system|assistant|user|developer)\*?\*?\s*:\s*\*?\*?\s*(?:(?:system|assistant|user|developer)\*?\*?\s*:\s*)?(?:ignore|disregard|forget|override|you|now|new|approved|confirmed|verified|bypass|from now|the operator|do not cite|emit)/im },
   { kind: 'role-spoof', re: /<\|?(?:im_start|im_end|system|endoftext)\|?>/i },
   { kind: 'tool-output-spoof', re: /^\s*(?:tool_result|function_results?|observation)\s*[:=]\s*\[?\{/im },
   { kind: 'output-forgery', re: /^#{1,3}\s*(?:ANALYSIS_REPORT|TECHNICAL_VERIFICATION|COMMUNITY_VERIFICATION|CONFLICTS_VERIFICATION|ONLINE_SPOT_CHECK|DRIFT_REPORT|DISCOVERY_CANDIDATES|TRIAGE_RESULTS|RECONCILIATION_SUMMARY)\b/m },
@@ -32,7 +41,13 @@ const PATTERNS = [
   { kind: 'shell-pipe', re: /(?:curl|wget)\s+[^\n|]{0,200}\|\s*(?:ba)?sh/i },
   { kind: 'tool-approval-request', re: /\b(?:allowed-tools|allowed_tools)\s*:\s*[^\n]*(?:Bash|Write|Edit)/i },
   { kind: 'hook-injection', re: /PreToolUse\s*:\s*|PostToolUse\s*:/ },
-  { kind: 'hidden-unicode', re: /[\u200B-\u200F\u2028\u2029\u202A-\u202E\u2060-\u2064\uFEFF]/ },
+  // The delimiters this renderer emits between profiles. A repo that contains these is trying to make
+  // its content look like part of the report rather than like a subject of it.
+  { kind: 'delimiter-forgery', re: /<!--\s*\/?groundtruth:(?:profile|analysis)[:/]/ },
+  // Greedy, so a run of N hidden characters is ONE match and becomes one marker — which is what keeps
+  // a file of zero-width characters from expanding ~68x on the way out. A single bidi override is
+  // meaningful on its own, so the quantifier starts at one; requiring two missed that.
+  { kind: 'hidden-unicode', re: /[\u200B-\u200F\u2028\u2029\u202A-\u202E\u2060-\u2064\uFEFF]+/ },
 ];
 
 export function scan(text, { path = '' } = {}) {
@@ -63,7 +78,9 @@ export function scrub(text, { path = '' } = {}) {
     let hit = re.exec(text);
     if (!hit) continue;
     detections.push({ file: path, kind, snippet: hit[0].slice(0, 120) });
-    out = out.replace(global, () => quarantine(kind, hit[0].index, text));
+    // hit.index, not hit[0].index: the latter is String.prototype.index, a *search method*, so it was
+    // undefined and every marker pointed at end-of-file.
+    out = out.replace(global, () => quarantine(kind, hit.index, text));
     // Re-check: replacing one span can expose another underneath it.
     hit = re.exec(out);
     if (hit) detections.push({ file: path, kind, snippet: hit[0].slice(0, 120) });

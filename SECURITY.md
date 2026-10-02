@@ -45,9 +45,9 @@ Four layers, in order of how much they actually buy.
 - **Clones are read-only.** Nothing in the pipeline mutates one. Two agents reading a tree that one
   is mutating produce contradictory profiles, and the profile would claim a commit never analysed.
 - **No agent holds `Write` or `Edit`.** All nine agents write through
-  `scripts/write-payload.mjs`, which validates before accepting. This closes self-escalation: an
-  agent able to rewrite `skills/`, `agents/`, or `settings.json` would not need to inject anything,
-  because it would simply promote itself for the next run.
+  `scripts/write-payload.mjs`, which validates before accepting. This removes the *direct*
+  self-escalation path — an agent cannot rewrite `skills/`, `agents/`, or `settings.json` with a tool
+  call. It does not remove it entirely; see "What is not defended".
 - **Git operations are read-only.** `clone.mjs` clones shallow; `drift.mjs` uses `git ls-remote`,
   which needs no credentials. No `git pull` ever runs against an untrusted checkout with the user's
   real Git identity.
@@ -100,10 +100,10 @@ close our template and emit its own.
 > **Treat hook enforcement as advisory.** If you need the guarantees to hold, use layers 1 and 2 —
 > which no settings file can switch off — and apply the optional guardrails below.
 
-### 4. Optional guardrails (opt-in, not shipped)
+### 4. Optional guardrails (opt-in, not applied automatically)
 
 A plugin cannot ship permission or sandbox settings; only `agent` and `subagentStatusLine` take
-effect from a plugin's `settings.json`. Apply these yourself if you want them:
+effect from a plugin's `settings.json`. The script ships; the settings it writes are yours to apply:
 
 ```bash
 node scripts/install-guardrails.mjs          # writes to ~/.claude/settings.json, backs up first
@@ -114,10 +114,23 @@ node scripts/install-guardrails.mjs --print  # show the settings without writing
 
 Stated plainly, because a tool that overstates its guarantees is worse than one that admits limits.
 
+- **A Bash-capable agent is inside the trust boundary.** `meta-reconciler` needs Bash because `Write`
+  cannot create the intermediate directories a profile needs. That is a genuine tradeoff, and the
+  consequence is blunt: **an agent that can run a shell can write a file, whatever tools it holds.**
+  `guard-bash.mjs` is a command-text denylist, and a denylist is not a boundary — `python3 -c`,
+  `base64 -d | sh`, and runtime path reconstruction (`os.path.expanduser`, `os.homedir()`) all defeat
+  a pattern list. So a prompt-injected agent with Bash can, in principle, install a skill under
+  `~/.claude/skills/` that runs in the user's next session, without ever using `Write`.
+  `guard-write.mjs` never sees that, because no `Write` tool is involved.
+  The only structural closure available to a plugin is the sandbox and deny-rule layer in
+  `scripts/install-guardrails.mjs`, which is **opt-in** and which you should apply if this matters to
+  you. Treat `meta-reconciler` as trusted-code-adjacent: run it on repositories you would open in a
+  browser anyway.
 - **`WebFetch` exfiltration is not contained.** The sandbox network allowlist applies to sandboxed
   commands. In-process tools like `WebFetch` follow permission rules only. If you have granted an
   agent unrestricted web access, that access is unrestricted — the guardrails deny it, they do not
-  sandbox it.
+  sandbox it. `guard-read.mjs` blocks reading credential stores, which removes the obvious source, but
+  not a determined attempt to send data you did not think to protect.
 - **An attacker who controls the host repository** can attempt to disable hooks (above). Layers 1 and
   2 still apply.
 - **A repository that is malicious only at a future commit.** Analysis pins the exact SHA it examined
@@ -130,8 +143,12 @@ Stated plainly, because a tool that overstates its guarantees is worse than one 
 - **Authenticated sources are invisible.** Private registries, paywalled advisories, and closed-issue
   trackers are `unverifiable`.
 - **Agent judgement can still be wrong.** The validator enforces that a verdict cites a real file the
-  agent read. It cannot enforce that the agent read it for the right reason. This is why the tier
-  system exists alongside, rather than instead of, a provenance record.
+  agent read. It cannot enforce that the agent read it *for the right reason* — an agent can read a
+  file and still cite it dishonestly. This is the residual failure mode of the whole design, and the
+  reason the provenance record is published next to the report.
+- **Injection scrubbing is a known-pattern blocklist.** Eleven patterns are matched and replaced;
+  instructions shaped differently than any of them pass through. Treat it as raising the cost of a
+  successful injection, not as immunity. The structural layers are what hold.
 
 ## Reporting a vulnerability
 
@@ -147,3 +164,16 @@ within 14.
 
 Supported versions: the latest published minor. Older versions receive fixes only if the issue is
 actively exploited against them.
+
+## Known gaps
+
+Stated so nobody has to find them by reading the source:
+
+- `guard-bash.mjs` cannot be a complete boundary; see the Bash limitation above.
+- The `write-payload.mjs` gate validates shape, not content correctness. A plausible but false
+  `evidence` string passes.
+- Verifier disjointness is enforced in the agent prompts and asserted in the layout invariants, but a
+  subagent reading a sibling's payload is blocked only by the read guard on the state directory, not by
+  anything the agent itself agrees to.
+- `.npmignore` is absent and `package.json.files` is the contract; a `files` omission is caught by
+  `scripts/check-pack.mjs` in CI, not at install time.

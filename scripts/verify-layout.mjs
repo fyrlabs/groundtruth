@@ -10,6 +10,18 @@ import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+// Top-level await is available here (the file already uses it in the runner below), so the paths
+// module can be imported directly and the contract asserted against the real implementation rather
+// than against a copy of it.
+const pathsModule = await import('../core/lib/paths.mjs');
+const stateRootModule = () => {
+  try {
+    return pathsModule.stateRoot();
+  } catch {
+    return null;
+  }
+};
+
 const ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
 const PLUGIN_NAME = 'groundtruth';
 
@@ -171,6 +183,79 @@ check('no agent grants Write or Edit (verifiers must not alter what they verify)
   }
   if (bad.length) throw new Error(`an injected instruction plus Write would let a repo rewrite an agent's own prompt for the next run:\n      ${bad.join('\n      ')}`);
   return 'ok';
+});
+
+// The clone-location and identity contract is load-bearing security surface, and it lives in prose
+// the orchestrator follows literally. A mismatch here is how the orchestrator ends up told to clone
+// into a project tree, which is the one thing the architecture forbids.
+check('the orchestrator documents the clone location the code implements', () => {
+  const skill = readFileSync(join(ROOT, 'skills/analyze/SKILL.md'), 'utf8');
+  const { cloneRoot, repoKey } = pathsModule;
+  const clone = cloneRoot();
+
+  // The clone root must be described as its own thing, never as living under the state root.
+  if (!skill.includes('GROUNDTRUTH_CLONE_DIR')) {
+    throw new Error('SKILL.md never mentions GROUNDTRUTH_CLONE_DIR, so an orchestrator cannot know where clones go');
+  }
+  const underState = /(?:state root\}\/sources|state_root\}\/sources)/i.test(skill);
+  if (underState) {
+    throw new Error('SKILL.md places clones under the state root, which is inside the project tree — ' +
+      `the code puts them at ${clone}`);
+  }
+  if (stateRootModule() && clone.startsWith(stateRootModule())) {
+    throw new Error(`cloneRoot() is inside stateRoot(): ${clone}`);
+  }
+
+  // Identity separator: paths.mjs uses one dot. Prose saying owner__repo sends payloads to a
+  // directory nothing reads, and the renderer then reports an empty profile.
+  const key = repoKey('https://github.com/acme/tool');
+  if (key !== 'acme.tool') throw new Error(`repoKey contract changed: got ${key}`);
+  if (/owner__repo/.test(skill)) {
+    throw new Error('SKILL.md documents owner__repo but paths.mjs derives owner.repo — payloads would be written where nothing reads them');
+  }
+  if (!skill.includes('owner.repo')) {
+    throw new Error('SKILL.md does not state the owner.repo identity format');
+  }
+  return `clone root ${clone}, key ${key}`;
+});
+
+// Two orchestrator steps invoked subcommands that did not exist, and the default branch exited 0, so
+// the caller saw success. The usage text is only enforced if something checks it against reality.
+check('every script invocation in the orchestrator resolves to a real subcommand', () => {
+  const skill = readFileSync(join(ROOT, 'skills/analyze/SKILL.md'), 'utf8');
+  const source = readFileSync(join(ROOT, 'scripts/state.mjs'), 'utf8');
+  const implemented = new Set([...source.matchAll(/case '([a-z-]+)':/g)].map((m) => m[1]));
+  const missing = new Set();
+  for (const m of skill.matchAll(/state\.mjs\s+([a-z-]+)/g)) {
+    if (!implemented.has(m[1])) missing.add(m[1]);
+  }
+  if (missing.size) throw new Error(`SKILL.md calls unimplemented state.mjs subcommands: ${[...missing].join(', ')}`);
+
+  // Scripts referenced by the orchestrator must exist on disk.
+  for (const m of skill.matchAll(/scripts\/([a-z-]+\.mjs)/g)) {
+    if (!existsSync(join(ROOT, 'scripts', m[1]))) throw new Error(`SKILL.md references missing script scripts/${m[1]}`);
+  }
+  return `${implemented.size} subcommands, all referenced ones exist`;
+});
+
+check('the write gate validates every stage it accepts', () => {
+  const source = readFileSync(join(ROOT, 'scripts/write-payload.mjs'), 'utf8');
+  // A stage that falls through to "ok" is a stage whose payload shape is never checked, which is how
+  // seven of eight stages ended up unvalidated while the file was described as the validating gate.
+  if (/\? \{ ok: true, errors: \[\] \}/.test(source)) {
+    throw new Error('write-payload.mjs accepts a stage with no validation — its shape would be unchecked');
+  }
+  // Verifier stages share one shape: a list of verdicts with cited files. Structural validation is
+  // therefore a family check, and every stage must appear in the family.
+  const stages = ['technical', 'community', 'conflicts', 'spotcheck'];
+  const family = /VALIDATED_STAGES/;
+  if (!family.test(source)) {
+    throw new Error('write-payload.mjs declares no validated-stage list, so a new stage would silently be unchecked');
+  }
+  for (const stage of stages) {
+    if (!source.includes(`'${stage}'`)) throw new Error(`write-payload.mjs does not mention stage "${stage}"`);
+  }
+  return `${stages.length + 2} stages validated (analysis, profile, + ${stages.length} verifier stages)`;
 });
 
 check('the orchestrator reads its arguments', () => {
