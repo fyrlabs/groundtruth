@@ -95,6 +95,37 @@ loaded. A prompt-only rule: rejected, same reason.
 **Tradeoff.** Legitimate projects that ship a `CLAUDE.md` cannot be analysed at all. The report
 would say so rather than silently proceeding.
 
+### Amendment (v0.2.0, after the first live run) — quarantine, not refuse
+
+The premise above no longer holds. Cloning inside the project tree was replaced by a per-user cache
+outside every project, which removes the auto-load path the original decision was defending against:
+the host loads `CLAUDE.md` from directories *under the cwd*, and `--add-dir` does not load it at all
+without `CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD`. So quarantining after cloning is no longer
+racing the loader.
+
+Refusal then turned out to be the wrong answer in practice, which the first live run demonstrated
+immediately: `NousResearch/hermes-agent` ships twelve `AGENTS.md` files, and `cloudflare/security-audit-skill`
+ships its own. Most of the agent ecosystem ships them. Refusing would have excluded exactly the
+repositories people most want to check.
+
+Control files — `CLAUDE.md`, `AGENTS.md`, `GEMINI.md`, `.cursorrules`, and the `.claude/`, `.gemini/`,
+`.cursor/` directories — are now **moved to a quarantine store beside the clone root** and disclosed in
+the run log, the manifest, and the report. The repository is analysed normally. Only size, depth, and
+file-count overruns still refuse.
+
+Two constraints make this safe, and both are load-bearing:
+
+1. **The quarantine store is a sibling of the clone root, never under the state root.** The state root
+   defaults to `<project>/.claude/groundtruth`, inside the cwd, so quarantined `CLAUDE.md` files placed
+   there would be auto-loaded — reinstating the original risk one function away from where the fix
+   lived.
+2. **The move is verified, not assumed.** After quarantining, the tree is re-inspected; if any
+   instruction-shaped path remains, or a move failed, the clone is discarded rather than analysed.
+
+**Alternatives reconsidered.** Deleting the files: rejected, the project's own instructions are
+evidence — a report should be able to say what a repository told its AI tools to do. Keeping them in
+place behind a read guard: rejected, one guard miss away from being read.
+
 ## 6. Agents emit JSON; verdicts must cite a file that exists
 
 **Decision.** Every agent's payload is JSON validated against `core/schema/*.json`. A verdict's

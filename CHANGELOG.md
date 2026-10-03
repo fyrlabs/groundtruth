@@ -38,7 +38,8 @@ The pipeline had never run. This release makes it work, and makes it trustworthy
 ### Fixed
 
 Found by an adversarial review of the first draft of 0.2.0, and fixed before release. Each was a
-control that appeared to exist and did not:
+control that appeared to exist and did not. A second review, run against the first round of fixes,
+found more of the same class — all in controls added days earlier:
 
 - **`npm run verify:frontmatter` was a no-op.** `lint-frontmatter.mjs` exported a `run()` function and
   never called it, so it exited 0 forever — including while the repository contained two deliberate
@@ -91,6 +92,29 @@ control that appeared to exist and did not:
   ecosystem worth analysing, since `hermes-agent` ships twelve `AGENTS.md` files and
   `cloudflare/security-audit-skill` ships its own. A first live run against trending repositories hit it
   immediately. Only size, depth, and file-count overruns still refuse.
+- **The quarantine store was inside the project tree.** It sat under the state root, which defaults to
+  `<project>/.claude/groundtruth` — inside the working directory, where the harness loads `CLAUDE.md`
+  from subdirectories once an agent reads a file there. The commit that moved clones out of the project
+  to prevent exactly this then put quarantined `CLAUDE.md` files one function away. Now a sibling of
+  the clone root, with a read guard and a test asserting the separation.
+- **`.claude/` was still refused, not quarantined**, so the headline feature did not work for the
+  highest-value injection targets — `.claude/skills/**` and `.claude/agents/*` are both auto-loaded.
+  The commit quarantined the harmless names and kept refusing the dangerous one.
+- **Every second clone call failed and deleted the clone.** The reuse branch was dropped, so a repeat
+  call fell through to `git clone` into a non-empty directory, git refused, and the error handler
+  removed the tree. Revisit is the core product loop.
+- **The refusal marker was attacker-plantable** (it lived inside the clone, which the remote controls)
+  and an unreadable one crashed the stage on every revisit. Moved outside the clone and parsed
+  defensively.
+- **A symlink named `CLAUDE.md` produced no finding at all** and stayed in the clone.
+- **The "same source cited by all agents" sentence was false for partial overlap** — schema, validator,
+  and renderer disagreed. The validator now records the shared paths and the renderer states them.
+- **A non-GitHub URL crashed the clone script** on an out-of-scope variable instead of reporting.
+- **The frontmatter linter no-oped under a checkout path that was a symlink or contained a space** —
+  byte-for-byte the bug it had just been written to fix. `import.meta.url` is resolved and
+  percent-encoded; `process.argv[1]` is neither.
+- **The "stub script" invariant was unsatisfiable**, requiring a literal to be both present and absent.
+  Dead code in the fix for dead code.
 - **Correlated agreement must be disclosed, no longer blocks the tier.** The first live run surfaced
   this as wrong: on a licence claim, two agents applied different arguments to one file and the rule
   forced a downgrade of a verified fact. `code-verified` answers "was this confirmed by reading the
@@ -149,7 +173,7 @@ Repositories are now treated as hostile input throughout.
   script resolves to a script that does real work. This is the file whose absence
   let three separately fatal bugs ship; a new agent, skill, or script must extend it in the same
   commit.
-- 106 tests with no dependencies, covering a hostile-repository fixture, citation provenance
+- 117 tests with no dependencies, covering a hostile-repository fixture, citation provenance
   (existence, containment, per-agent read log, correlation by canonical path), credential exfiltration,
   and the command shapes that defeated earlier revisions of the guards.
 - `report.provenance.json` in W3C PROV-O shape, so every tier can be audited mechanically instead of

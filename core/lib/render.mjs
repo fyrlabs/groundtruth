@@ -51,6 +51,20 @@ function mdCell(text) {
   return esc(text).slice(0, 300) || '—';
 }
 
+function renderQuarantine(profile) {
+  const files = profile.quarantined_control_files || [];
+  if (!files.length) return null;
+  return [
+    '#### Quarantined control files',
+    '',
+    `This repository ships ${files.length} file(s) that instruct an AI coding agent. They were moved out`,
+    'of the clone before analysis and were not read as instruction. The repository is otherwise analysed normally.',
+    '',
+    ...files.map((f) => `- \`${esc(f.path)}\` (${esc(f.kind)})`),
+    '',
+  ].join('\n');
+}
+
 function renderProfile(profile) {
   const { repo, health = {}, license = {} } = profile;
   const out = [];
@@ -99,7 +113,13 @@ function renderProfile(profile) {
     out.push('|---|---|---|---|');
     for (const c of profile.claims) {
       const notes = [];
-      if (c.correlated) notes.push('correlated — same source cited by all agents');
+      // Say what is actually shared. "same source cited by all agents" was false whenever only some
+      // agents overlapped, and a report that misstates its own evidence is worse than no report.
+      if (c.correlated) {
+        notes.push(c.shared_files?.length
+          ? `correlated — shared source: ${c.shared_files.map((f) => `\`${f}\``).join(', ')}`
+          : 'correlated — agents share at least one cited file');
+      }
       if (c.downgrade?.length) notes.push(c.downgrade.join(', '));
       if (c.cited_files?.length) notes.push(`\`${esc(c.cited_files[0])}\``);
       out.push(`| ${mdCell(c.claim)} | ${TIER_ICON[c.tier]} ${c.tier} | ${mdCell(c.evidence)} | ${esc(notes.join(' · ')) || '—'} |`);
@@ -136,6 +156,9 @@ function renderProfile(profile) {
     for (const n of cov.uncovered_notes) out.push(`- ${esc(n)}`);
   }
   out.push('');
+
+  const quarantine = renderQuarantine(profile);
+  if (quarantine) out.push(quarantine);
 
   out.push('#### Verdict');
   out.push('');
@@ -302,7 +325,12 @@ export function listProfiles() {
   const out = [];
   for (const key of readdirSync(dir)) {
     const profile = readJson(join(dir, key, 'profile.json'), null);
-    if (profile) out.push(profile);
+    if (!profile) continue;
+    // Fold the clone-time quarantine record in, so the report discloses it without the reconciler
+    // having to remember what the clone step found.
+    const manifest = readJson(join(dir, key, 'manifest.json'), {});
+    profile.quarantined_control_files = manifest.quarantined || [];
+    out.push(profile);
   }
   // Plain codepoint comparison, not localeCompare: sorting must not depend on the host locale.
   return out.sort((a, b) => (a.repo.key < b.repo.key ? -1 : a.repo.key > b.repo.key ? 1 : 0));

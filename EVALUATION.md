@@ -24,7 +24,7 @@ This is the pre-registered harness for that, plus the results as they stand.
 ## Deterministic checks (CI, no model)
 
 These are not "the model seemed to behave". They are invariants that either hold or do not, and they
-run on every commit. Results as of v0.2.0: **106 tests passing, 23/23 layout invariants.**
+run on every commit. Results as of v0.2.0: **117 tests passing, 23/23 layout invariants.**
 
 | Invariant | Where | Count |
 |---|---|---|
@@ -39,7 +39,9 @@ run on every commit. Results as of v0.2.0: **106 tests passing, 23/23 layout inv
 | Guards block the shapes that defeated earlier revisions | `test/hooks.test.mjs` | 12 cases |
 | A stage without a payload is not reported complete | `test/state.test.mjs` | 2 cases |
 | Re-render is byte-identical | `test/render.test.mjs` | 1 case |
-| A linter that cannot fail is caught | `test/frontmatter.test.mjs` | 3 cases |
+| A linter that cannot fail is caught, from any path shape | `test/frontmatter.test.mjs` | 5 cases |
+| Quarantine removes control files, does not merely detect them | `test/hostile-fixture.test.mjs` | 9 cases |
+| Clone reuse, refusal markers, and non-GitHub rejection | `test/hostile-fixture.test.mjs` | 4 cases |
 | `WebFetch` exfiltration is *not* contained | `SECURITY.md` | documented, not claimed |
 
 ### Fixture results

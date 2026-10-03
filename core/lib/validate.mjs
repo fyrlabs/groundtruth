@@ -13,7 +13,7 @@
 //     agreement that shares a source carries no independent weight.
 
 import { readFileSync, realpathSync, statSync } from 'node:fs';
-import { dirname, join, resolve, sep } from 'node:path';
+import { dirname, join, relative, resolve, sep } from 'node:path';
 import { repoDir, stateRoot } from './paths.mjs';
 
 const TIERS = new Set(['code-verified', 'self-reported', 'contradicted', 'unverifiable']);
@@ -218,7 +218,6 @@ export function validateProfile(profile, { key, enforceReads = true } = {}) {
         for (const f of set) counts.set(f, (counts.get(f) || 0) + 1);
       }
       const shared = [...counts.entries()].filter(([, n]) => n > 1).map(([f]) => f);
-      const fullyShared = shared.length > 0 && counts.size === shared.length;
 
       // Same-source agreement must be DISCLOSED, not downgraded. One agent reading the actual file
       // is code verification on its own terms — the tier answers "was this confirmed by reading the
@@ -230,6 +229,12 @@ export function validateProfile(profile, { key, enforceReads = true } = {}) {
       // downgrade on a licence claim where two agents applied genuinely different arguments to the
       // same file, and it conflated "is this verified" with "was this independently verified" — two
       // different questions that belong in two different fields.
+      // Persist what was actually shared. The renderer used to restate the relationship in its own
+      // words and got it wrong; deriving the sentence from a recorded value removes that class of bug.
+      if (shared.length) {
+        const realRoot = canonicalIn(root, '.');
+        c.shared_files = shared.map((f) => relative(realRoot, f) || f);
+      }
       if (shared.length && c.correlated !== true) {
         fail(errors, `${where}: agents share evidence (${shared.join(', ')}) — their agreement carries no ` +
           'independent weight, so it must be disclosed with correlated: true. The tier may stand if the ' +

@@ -8,8 +8,9 @@
 // dropped without warning — so a lint built on the ~/.claude/agents/ table would happily accept
 // `permissionMode` in a plugin agent, where it does nothing.
 
-import { readFileSync, readdirSync, statSync } from 'node:fs';
+import { readFileSync, readdirSync, realpathSync, statSync } from 'node:fs';
 import { dirname, join } from 'node:path';
+
 import { fileURLToPath } from 'node:url';
 
 const ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
@@ -37,6 +38,14 @@ const SKILL_FIELDS = new Set([
 ]);
 
 const MODELS = new Set(['sonnet', 'opus', 'haiku', 'fable', 'best', 'default', 'inherit', 'opusplan']);
+
+function canonical(path) {
+  try {
+    return realpathSync(path);
+  } catch {
+    return path;
+  }
+}
 
 function parseFrontmatter(file) {
   const text = readFileSync(file, 'utf8');
@@ -152,7 +161,12 @@ export { AGENT_FIELDS_LOCAL, AGENT_FIELDS_PLUGIN, AGENT_FIELDS_IGNORED_IN_PLUGIN
 // `verify-layout.mjs` caught the same class of bug in the orchestrator, so this one gets the same
 // treatment — the module runs itself when invoked directly, and a test asserts it actually fails on
 // a planted violation.
-if (import.meta.url === `file://${process.argv[1]}`) {
+// Self-invoke check, and it has to survive two things a naive comparison does not:
+//   - percent-encoding: import.meta.url encodes a space, process.argv[1] does not
+//   - symlinks: import.meta.url is already resolved (/var -> /private/var on macOS), argv[1] is not
+// Comparing either pair directly makes the linter exit 0 having done nothing, which is the exact bug
+// this guard was added to catch. realpathSync on the module's own path settles both at once.
+if (canonical(process.argv[1]) === canonical(fileURLToPath(import.meta.url))) {
   const { problems, agentCount, skillCount } = run();
   const rel = (f) => f.replace(`${ROOT}/`, '');
   if (problems.length) {

@@ -114,9 +114,15 @@
           "evidence": { "type": "string", "minLength": 1, "maxLength": 800 },
           "cited_files": { "type": "array", "maxItems": 8, "items": { "type": "string", "maxLength": 400 } },
           "downgrade": { "type": "array", "items": { "enum": ["risk-of-bias", "imprecision", "inconsistency", "indirectness", "publication-bias"] } },
+          "shared_files": {
+            "type": "array",
+            "maxItems": 16,
+            "items": { "type": "string", "maxLength": 400 },
+            "description": "Clone-relative files cited by more than one verdict. Computed by the validator from canonical paths, so a spelling or capitalisation variant cannot hide a shared source."
+          },
           "correlated": {
             "type": "boolean",
-            "description": "True when every verdict on this claim cited the same file. Agreement that carries no independent weight."
+            "description": "True when two or more verdicts cite any file in common. Their agreement carries no independent weight, so it must be disclosed rather than presented as corroboration."
           },
           "verdicts": {
             "type": "array",
@@ -167,6 +173,21 @@
           "description": "Claims that no verifier could reach at all. Non-zero is normal and honest."
         },
         "uncovered_notes": { "type": "array", "maxItems": 20, "items": { "type": "string", "maxLength": 300 } }
+      }
+    },
+
+    "quarantined_control_files": {
+      "type": "array",
+      "maxItems": 100,
+      "description": "Harness control files removed from the clone at clone time. Populated from the manifest, not authored by the reconciler.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["path", "kind"],
+        "properties": {
+          "path": { "type": "string", "maxLength": 400 },
+          "kind": { "type": "string", "maxLength": 60 }
+        }
       }
     },
 

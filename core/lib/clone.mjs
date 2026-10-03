@@ -71,12 +71,22 @@ export function inspectTree(root) {
         }
         if (target !== root && !target.startsWith(root + sep)) {
           findings.push({ kind: 'symlink-escape', path: relative(root, full) });
+          continue;
+        }
+        // A symlink named CLAUDE.md or AGENTS.md is the same instruction surface whatever it points
+        // at, and skipping it left the name in the clone with no finding at all.
+        const leaf = entry.name;
+        if (CONTROL_FILES.has(leaf) || CONTROL_DIRS.has(leaf)) {
+          findings.push({ kind: 'control-symlink', path: relative(root, full), quarantinable: true });
         }
         continue;
       }
       if (entry.isDirectory()) {
         if (CONTROL_DIRS.has(entry.name)) {
-          findings.push({ kind: 'control-dir', path: relative(root, full) });
+          // Quarantinable like the files. .claude/skills/**/SKILL.md and .claude/agents/*.md are the
+        // highest-value injection targets there, so refusing the whole repository over them would
+        // exclude the very repos most worth checking while quarantining the harmless names.
+        findings.push({ kind: 'control-dir', path: relative(root, full), quarantinable: true });
           continue;
         }
         if (SKIP_DIRS.has(entry.name)) continue;
@@ -104,8 +114,20 @@ export function inspectTree(root) {
 }
 
 // Shallow, single-branch, no submodules: we analyse the source, not its history or its dependencies.
+// Beside the clone root, NOT under the state root. The state root defaults to
+// <project>/.claude/groundtruth, which is inside the working directory — and the harness loads
+// CLAUDE.md from subdirectories under the cwd once an agent reads a file there. Putting quarantined
+// CLAUDE.md there would have reinstated the exact auto-load path that moving clones out of the project
+// tree exists to close, one function away. The earlier revision did exactly that.
 export function quarantineRoot(key) {
-  return join(paths.stateRoot(), 'quarantine', key);
+  return join(dirname(paths.sourcesDir()), 'quarantine', key);
+}
+
+// A refusal marker must not live inside the clone either: the remote controls that directory, so a
+// repo shipping its own .groundtruth-refused.json could refuse its own re-analysis and choose the
+// message printed to the user.
+export function refusalMarkerPath(key) {
+  return join(paths.stateRoot(), 'refusals', `${key}.json`);
 }
 
 // Move control files out of the clone rather than deleting them: the repo's own documentation is
@@ -115,7 +137,13 @@ export function quarantineControls(root, key, findings) {
   if (!targets.length) return [];
 
   const store = quarantineRoot(key);
-  rmSync(store, { recursive: true, force: true });
+  try {
+    rmSync(store, { recursive: true, force: true });
+  } catch (error) {
+    // Previously this threw straight out of cloneRepo, killing the clone script and leaving an
+    // un-quarantined tree on disk. Failing open on a security control is worse than failing the run.
+    return [{ kind: 'quarantine-store-unwritable', path: store, quarantine_failed: String(error.message) }];
+  }
   const moved = [];
 
   for (const f of targets) {
@@ -133,7 +161,10 @@ export function quarantineControls(root, key, findings) {
         rmSync(from, { recursive: true, force: true });
         moved.push({ ...f, quarantined_to: to });
       } catch (inner) {
-        return [{ ...f, quarantine_failed: String(inner.message) }];
+        // Report everything, including the entries already moved: under-reporting a partial
+        // quarantine makes the run log claim less than actually happened.
+        moved.push({ ...f, quarantine_failed: String(inner.message) });
+        return moved;
       }
       void error;
     }
@@ -149,14 +180,40 @@ export function cloneRepo(url, { force = false } = {}) {
 
   // A refusal marker survives a failed attempt, so a retry reports the real reason instead of
   // letting git fail on a non-empty destination directory and hiding the cause.
-  const markerPath = join(root, '.groundtruth-refused.json');
+  const markerPath = refusalMarkerPath(key);
   if (!force && existsSync(markerPath)) {
-    const marker = JSON.parse(readFileSync(markerPath, 'utf8'));
-    return { key, ok: false, root, reason: marker.reason, findings: marker.findings || [], repeated: true };
+    try {
+      const marker = JSON.parse(readFileSync(markerPath, 'utf8'));
+      return { key, ok: false, root, reason: marker.reason, findings: marker.findings || [], repeated: true };
+    } catch {
+      // An unreadable marker is treated as absent rather than fatal. It used to throw, so a stray
+      // file of the same name crashed the clone stage on every revisit.
+    }
   }
 
-  if (existsSync(join(root, '.git'))) {
-    if (force) rmSync(root, { recursive: true, force: true });
+  // Clean up whenever either signal is present, and let --force decide. Keying cleanup off .git alone
+  // made --force unable to recover from a caps refusal, which is the one case that writes a marker.
+  if (force && (existsSync(markerPath) || existsSync(join(root, '.git')))) {
+    rmSync(root, { recursive: true, force: true });
+    rmSync(markerPath, { force: true });
+  }
+
+  // Reuse an existing clean clone. Without this, every second call fell through to `git clone` into a
+  // non-empty directory, git refused, and the catch below deleted the clone — so re-visiting a repo
+  // destroyed it. Revisit is the core product loop (a drift-gated registry), so this regressed on
+  // every re-run.
+  if (!force && existsSync(join(root, '.git'))) {
+    const { findings } = inspectTree(root);
+    if (!findings.length) {
+      try {
+        const sha = git(['rev-parse', 'HEAD'], root).trim();
+        return { key, ok: true, root, sha, reused: true, files: undefined, bytes: undefined, quarantined: [] };
+      } catch {
+        rmSync(root, { recursive: true, force: true });
+      }
+    } else {
+      rmSync(root, { recursive: true, force: true });
+    }
   }
 
   mkdirSync(root, { recursive: true });
@@ -174,10 +231,13 @@ export function cloneRepo(url, { force = false } = {}) {
   const refusable = findings.filter((f) => !f.quarantinable);
 
   if (refusable.length) {
-    // Expensive or malformed: the repo is not analysable, and the reason must survive a retry.
-    writeFileSync(markerPath, `${JSON.stringify({ reason: 'tree exceeds clone caps', findings: refusable, at: new Date().toISOString() }, null, 2)}\n`);
+    // Genuinely not analysable — size, depth, or file count. The reason names the actual finding kinds
+    // rather than asserting "exceeds clone caps", which was simply false for a control-dir refusal.
+    const reason = `tree exceeds clone caps (${[...new Set(refusable.map((f) => f.kind))].join(', ')})`;
+    mkdirSync(dirname(markerPath), { recursive: true });
+    writeFileSync(markerPath, `${JSON.stringify({ reason, findings: refusable, at: new Date().toISOString() }, null, 2)}\n`);
     rmSync(join(root, '.git'), { recursive: true, force: true });
-    return { key, ok: false, root, sha, reason: 'tree exceeds clone caps', findings: refusable, files, bytes };
+    return { key, ok: false, root, sha, reason, findings: refusable, files, bytes };
   }
 
   const quarantined = quarantineControls(root, key, findings);

@@ -38,7 +38,7 @@ if (!urls.length) {
   process.exit(1);
 }
 
-const results = urls.map((url) => cloneRepo(url, { force }));
+const results = urls.map((url) => ({ url, ...cloneRepo(url, { force }) }));
 let failed = 0;
 
 for (const r of results) {
@@ -47,11 +47,15 @@ for (const r of results) {
     // every repo is skipped — the drift stage would be a permanent no-op while looking like it ran.
     const version = readVersion(r.root);
     const dir = join(paths.reposDir(), r.key);
+    // Quarantine is persisted, not just printed. stdout is ephemeral, so a registry entry for a repo
+    // that shipped a dozen AGENTS.md files would otherwise contain no record that it did — which
+    // inverts the property the registry exists for.
     writeJson(join(dir, 'manifest.json'), {
       sha: r.sha,
       version,
       ref: 'HEAD',
       files: r.files ?? null,
+      quarantined: (r.quarantined || []).map((q) => ({ kind: q.kind, path: q.path })),
       cloned_at: new Date().toISOString(),
     });
     setRepoStage(r.key, 'clone', 'done');
@@ -64,8 +68,10 @@ for (const r of results) {
     }
   } else {
     failed += 1;
-    process.stdout.write(`refused   ${r.key || url}: ${r.reason}\n`);
-    for (const f of r.findings || []) process.stdout.write(`            - ${f.kind}: ${f.path}\n`);
+    // r.url, not `url`: the loop variable was never in scope, so any non-GitHub URL crashed the
+    // whole run on a ReferenceError instead of reporting the rejection.
+    process.stdout.write(`refused   ${r.key || r.url}: ${r.reason}\n`);
+    for (const f of r.findings || []) process.stdout.write(`            - ${f.kind}: ${f.path}${f.quarantinable ? ' (quarantinable)' : ''}\n`);
   }
 }
 

@@ -259,13 +259,20 @@ check('every npm script resolves to a script that exists and does work', () => {
       }
       // A linter or verifier that exports a function and never calls it exits 0 forever.
       const source = readFileSync(path, 'utf8');
-      const exportsARun = /export function run\(/.test(source);
-      const selfInvokes = /import\.meta\.url === `file:\/\/\$\{process\.argv\[1\]\}`/.test(source);
+      const exportsARun = /export\s+(?:async\s+)?function\s+run\s*\(|export\s+const\s+run\s*=/.test(source);
+      // Recognise any correct self-invoke, not one literal spelling — the point is to catch a runner
+      // that is exported and never called, not to pin a formatting choice.
+      // Accept any correct self-invoke: URL comparison, path comparison, or a canonicalised one.
+      const selfInvokes = /(?:pathToFileURL\(process\.argv\[1\]\)\.href === import\.meta\.url|process\.argv\[1\] === fileURLToPath\(import\.meta\.url\)|canonical\(process\.argv\[1\]\) === canonical\()/s.test(source);
       if (exportsARun && !selfInvokes) {
         broken.push(`scripts/${m[1]} exports run() but never invokes it, so it always exits 0 (npm run ${name})`);
       }
-      if (/\{\s*ok: true, errors: \[\]\s*\}\s*;?\s*$/m.test(source.trim()) && !/ok: true/.test(source)) {
-        broken.push(`scripts/${m[1]} ends in a stub that reports success`);
+      // A script whose last statement is an unconditional success literal reports green whatever it
+      // computed. The earlier version of this check required the literal to be present AND absent,
+      // which is unsatisfiable — dead code in the fix for dead code.
+      const tail = source.trimEnd().split('\n').slice(-3).join('\n');
+      if (/\{\s*ok:\s*true\s*,\s*errors:\s*\[\]\s*\}\s*;?\s*$/.test(tail) && !/return\s+\{\s*ok:\s*true/.test(source)) {
+        broken.push(`scripts/${m[1]} ends in an unconditional success result (npm run ${name})`);
       }
     }
   }
