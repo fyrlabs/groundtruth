@@ -7,6 +7,35 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+
+Four defects that only a live run against a real repository could surface. All four produced a
+pipeline that reported success over missing or repeated work.
+
+- A partial working tree was reused as if intact. An interrupted `git clone` leaves a valid `.git` and
+  a resolvable `HEAD` while most of the checkout is absent; reuse accepted it, and a live run analysed
+  a one-file fragment of a twenty-two-file repository. Reuse now requires `git ls-files --deleted` to
+  agree with the manifest's quarantine count.
+- Debris at a clone path with no `.git` made every later run fail permanently with git's "destination
+  path already exists and is not an empty directory", then write a refusal marker nothing in the
+  pipeline could clear. A clone is derived from a URL, so an unusable directory at the target is now
+  removed before cloning.
+- `write-payload.mjs --file` treated its argument as an output path as well as an input, so a payload
+  could be written outside the state directory where no resume could find it. `--file` is now input
+  only; every write lands in state. `write-profile.mjs` was rewritten to match, and the reconciler
+  prompt no longer validates a path it does not own.
+- The resumable stage list named the reconciler stage `reconcile` while every write path used
+  `profile`. Nothing ever wrote `reconcile`, so `repoProgress` never counted a finished repository
+  complete and every resume redid the most expensive stage in the pipeline. `scripts/verify-layout.mjs`
+  now asserts the two name sets agree.
+
+### Added
+
+- `EVALUATION.md` records the live runs, the four defects, and one negative result: claim quotations are
+  not verified against their cited file. `validateClaimFile` checks that a claim is well formed and
+  cites an existing file, but a hallucinated quote passes. This is a validator gap and the largest
+  known hole in the product.
+
 ## [0.2.0] — 2026-10-01
 
 The pipeline had never run. This release makes it work, and makes it trustworthy while it runs.

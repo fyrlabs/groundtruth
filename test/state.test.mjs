@@ -1,5 +1,6 @@
 // State must survive interruption, and a "done" marker must never outlive its payload.
 
+import { spawnSync } from 'node:child_process';
 import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -23,6 +24,10 @@ function inTempState(fn) {
 }
 
 export default ({ test, assert }) => {
+  // The runner only invokes mod.default, so a named export would be silently skipped — the same
+  // 'a check looked implemented and never ran' failure the layout script exists to prevent.
+  writePayloadTests({ test, assert });
+
   test('repo identity distinguishes same-named repos in different orgs', () => {
     assert.equal(repoKey('https://github.com/acme/tool'), 'acme.tool');
     assert.equal(repoKey('https://github.com/other/tool'), 'other.tool');
@@ -159,3 +164,71 @@ export default ({ test, assert }) => {
     }
   });
 };
+
+// Regression: a payload written with --file must still land in state.
+//
+// During the first live run a profile was written with
+// `write-payload.mjs profile <key> --file /tmp/prof.json`. That revision treated --file as the
+// output path as well as the input, so the profile went to /tmp instead of the state directory and
+// nothing recorded it. The run reported success and the payload was gone — the precise
+// success-marker-over-a-total-miss failure this pipeline exists to prevent, happening inside its own
+// tooling. `--file` is now input only.
+
+function writePayloadTests({ test, assert }) {
+  const script = join(ROOT, 'scripts', 'write-payload.mjs');
+  const profile = {
+    schema_version: 1,
+    repo: { key: 'acme.t', owner: 'acme', name: 't', url: 'https://github.com/acme/t' },
+    analyzed_at: '2026-10-02T00:00:00Z',
+    prose: {
+      what_it_does: 'long enough to clear the schema minimum length requirement for prose fields',
+      how_it_works: 'long enough to clear the schema minimum length requirement for prose fields',
+      verdict: 'long enough to clear the schema minimum length requirement for prose fields',
+      analyst_notes: '',
+    },
+    claims: [],
+    coverage: { claims_total: 0, verified: 0, self_reported: 0, contradicted: 0, unverifiable: 0, uncovered: 0 },
+  };
+
+  test('a payload supplied with --file is written into the state directory, not the supplied path', () => {
+    inTempState((stateDir) => {
+      const source = join(stateDir, 'incoming.json');
+      writeFileSync(source, JSON.stringify(profile));
+      const run = spawnSync(process.execPath, [script, 'profile', 'acme.t', '--file', source], { encoding: 'utf8' });
+
+      assert.equal(run.status, 0, run.stderr);
+      const stored = join(stateDir, 'repos', 'acme.t', 'profile.json');
+      assert.ok(existsSync(stored), 'profile.json must exist in the state directory');
+      assert.equal(readJson(stored).repo.key, 'acme.t');
+    });
+  });
+
+  test('a payload supplied with --file is recoverable by a resume', () => {
+    inTempState((stateDir) => {
+      const source = join(stateDir, 'incoming.json');
+      writeFileSync(source, JSON.stringify(profile));
+      spawnSync(process.execPath, [script, 'profile', 'acme.t', '--file', source], { encoding: 'utf8' });
+
+      const state = loadState();
+      state.repos = state.repos || {};
+      state.repos['acme.t'] = { ...(state.repos['acme.t'] || {}), url: 'https://github.com/acme/t', sha: 'abc1234' };
+      saveState(state);
+      setRepoStage('acme.t', 'profile', 'done');
+
+      const progress = repoProgress('acme.t');
+      assert.ok(progress.complete.includes('profile'), 'stage written via --file must count as complete');
+      assert.equal(progress.stages.profile.value, 'done');
+    });
+  });
+
+  test('a payload supplied with --file reports the state path it landed in', () => {
+    inTempState(() => {
+      const source = join(tmpdir(), `gt-in-${process.pid}.json`);
+      writeFileSync(source, JSON.stringify(profile));
+      const run = spawnSync(process.execPath, [script, 'profile', 'acme.t', '--file', source], { encoding: 'utf8' });
+      rmSync(source, { force: true });
+      assert.match(run.stderr, /profile\.json/);
+      assert.ok(!run.stderr.includes(source), `stderr named the input path as the output: ${run.stderr}`);
+    });
+  });
+}

@@ -172,6 +172,33 @@ export function quarantineControls(root, key, findings) {
   return moved;
 }
 
+// How many control files the manifest says quarantine removed. Without a manifest nothing was
+// quarantined, so the allowance is zero rather than unknown — an unknown allowance would let a
+// damaged tree hide behind a missing record.
+function manifestQuarantineCount(key) {
+  try {
+    const raw = readFileSync(join(paths.reposDir(), key, 'manifest.json'), 'utf8');
+    return JSON.parse(raw).quarantined?.length ?? 0;
+  } catch {
+    return 0;
+  }
+}
+
+// Tracked files that git knows about and the working tree does not have, less the ones quarantine
+// deliberately removed. An interrupted `git clone` leaves .git and a resolvable HEAD while most of
+// the checkout is absent: reuse accepted that, a live run analysed a one-file fragment of a
+// twenty-two-file repository, and the pipeline reported success. `ls-files --deleted` is the only
+// plumbing-only way to tell an intact checkout from a partial one.
+export function missingTrackedFiles(root, quarantined = 0) {
+  let deleted;
+  try {
+    deleted = git(['ls-files', '--deleted'], root).split('\n').filter(Boolean).length;
+  } catch {
+    return 0;
+  }
+  return Math.max(0, deleted - quarantined);
+}
+
 export function cloneRepo(url, { force = false } = {}) {
   const key = repoKey(url);
   if (!key) return { key: null, ok: false, reason: `not a GitHub repo URL: ${url}` };
@@ -207,7 +234,15 @@ export function cloneRepo(url, { force = false } = {}) {
     if (!findings.length) {
       try {
         const sha = git(['rev-parse', 'HEAD'], root).trim();
-        return { key, ok: true, root, sha, reused: true, files: undefined, bytes: undefined, quarantined: [] };
+        // A resolvable HEAD is not evidence of an intact working tree.
+        const quarantined = manifestQuarantineCount(key);
+        const missing = missingTrackedFiles(root, quarantined);
+        if (missing > 0) {
+          process.stderr.write(`re-clone     ${key} sha=${sha.slice(0, 12)} ${missing} tracked file(s) missing from the working tree\n`);
+          rmSync(root, { recursive: true, force: true });
+        } else {
+          return { key, ok: true, root, sha, reused: true, files: undefined, bytes: undefined, quarantined: [] };
+        }
       } catch {
         rmSync(root, { recursive: true, force: true });
       }
@@ -215,6 +250,13 @@ export function cloneRepo(url, { force = false } = {}) {
       rmSync(root, { recursive: true, force: true });
     }
   }
+
+  // Anything already sitting at the target that is not a usable clone is debris: git clone refuses a
+  // non-empty destination, so leaving it in place turns a recoverable state into a permanent refusal.
+  // Found live after an interrupted clone left a .git-less directory — every later run failed with
+  // "destination path already exists and is not an empty directory" and nothing in the pipeline could
+  // clear it. Clones are derived from a URL and are safe to discard.
+  if (existsSync(root)) rmSync(root, { recursive: true, force: true });
 
   mkdirSync(root, { recursive: true });
   try {

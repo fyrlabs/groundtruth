@@ -22,7 +22,7 @@ yourself is a defect, not a shortcut.
 - `ANALYSIS`: the analyzer's `analysis.json`
 - `TECHNICAL`, `COMMUNITY`, `CONFLICTS`, `SPOTCHECK`: verifier payloads, or `null` if a stage failed
 - `INJECTIONS`: detected injection attempts, or `null`
-- `OUTPUT_PATH`: where to write `profile.json`
+- `STATE_DIR`: the run's state directory; `profile.json` is written into `$STATE_DIR/repos/$REPO_KEY/` and nowhere else
 
 ## Untrusted content
 
@@ -91,7 +91,7 @@ Run this through `Bash` — it is the only way you can write, and the script val
 accepting, so a rejected payload is reported to you rather than silently stored:
 
 ```bash
-node ${CLAUDE_PLUGIN_ROOT}/scripts/write-profile.mjs "$OUTPUT_PATH" --key "$REPO_KEY" <<'JSON'
+node ${CLAUDE_PLUGIN_ROOT}/scripts/write-profile.mjs --key "$REPO_KEY" <<'JSON'
 { "schema_version": 1, ... }
 JSON
 ```
@@ -102,7 +102,7 @@ No prose outside the `prose` block, no markdown fences in any string.
 Validate before returning:
 
 ```bash
-node ${CLAUDE_PLUGIN_ROOT}/scripts/validate-payload.mjs "$OUTPUT_PATH" --key "$REPO_KEY"
+node ${CLAUDE_PLUGIN_ROOT}/scripts/validate-payload.mjs "$STATE_DIR/repos/$REPO_KEY/profile.json" --key "$REPO_KEY"
 ```
 
 If it reports failures, fix the JSON and revalidate. Do not return an unvalidated profile.

@@ -12,7 +12,11 @@ import { paths, repoStateDir, stateRoot } from './paths.mjs';
 export const SCHEMA_VERSION = 2;
 
 const STATUSES = ['IDLE', 'STARTED', 'AWAITING_APPROVAL', 'IN_ANALYSIS', 'RECONCILING', 'COMPLETE', 'FAILED'];
-const STAGES = ['clone', 'drift', 'analysis', 'technical', 'community', 'conflicts', 'spotcheck', 'reconcile', 'render'];
+// 'profile' is the reconcile stage's stage name: write-payload and every payload path use it, and it
+// is the stage that carries the reconciler's output. It was previously listed as 'reconcile', which
+// nothing ever wrote — so repoProgress never counted a finished repo complete and every resume redid
+// the most expensive stage in the pipeline. Found by running a real resume against live state.
+const STAGES = ['clone', 'drift', 'analysis', 'technical', 'community', 'conflicts', 'spotcheck', 'profile', 'render'];
 
 export function activeRunDir() {
   const dir = join(paths.runsDir(), 'active');

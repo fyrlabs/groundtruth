@@ -317,6 +317,40 @@ check('the write gate validates every stage it accepts', () => {
   return `${stages.length + 2} stages validated (analysis, profile, + ${stages.length} verifier stages)`;
 });
 
+check('the resumable stage list and the write gate agree on stage names', () => {
+  // The stage list drove repoProgress, the write gate drove what actually lands in state, and the two
+  // disagreed on the reconciler: the list said 'reconcile', every write path said 'profile', and
+  // nothing ever wrote 'reconcile'. Every resume therefore redid the most expensive stage in the
+  // pipeline while reporting the repository as incomplete. Assert the two name sets agree so the
+  // disagreement cannot be reintroduced silently.
+  const state = readFileSync(join(ROOT, 'core', 'lib', 'state.mjs'), 'utf8');
+  const gate = readFileSync(join(ROOT, 'scripts', 'write-payload.mjs'), 'utf8');
+
+  const listMatch = state.match(/const STAGES = \[([^\]]+)\]/);
+  if (!listMatch) throw new Error('core/lib/state.mjs has no STAGES array');
+  const resumable = [...listMatch[1].matchAll(/'([^']+)'/g)].map((m) => m[1]);
+
+  const validatedMatch = gate.match(/VALIDATED_STAGES = new Set\(\[([^\]]+)\]\)/);
+  if (!validatedMatch) throw new Error('scripts/write-payload.mjs has no VALIDATED_STAGES set');
+  const validated = [...validatedMatch[1].matchAll(/'([^']+)'/g)].map((m) => m[1]);
+
+  // Every payload-bearing stage the gate can write must be resumable, or its work is redone every run.
+  for (const stage of validated) {
+    if (!resumable.includes(stage)) {
+      throw new Error(`write-payload.mjs accepts stage "${stage}" but core/lib/state.mjs does not track it — ` +
+        'a resume would redo that stage forever');
+    }
+  }
+  // Nothing resumable may be a name the gate can never write, or it is complete by definition.
+  const writable = new Set([...validated, 'clone', 'render']);
+  for (const stage of resumable) {
+    if (!writable.has(stage)) {
+      throw new Error(`core/lib/state.mjs tracks stage "${stage}" but nothing can ever write it`);
+    }
+  }
+  return `${resumable.length} resumable stages, all writable (${validated.length} validated)`;
+});
+
 check('the orchestrator reads its arguments', () => {
   const file = join(ROOT, 'skills', 'analyze', 'SKILL.md');
   if (!existsSync(file)) throw new Error('skills/analyze/SKILL.md missing');

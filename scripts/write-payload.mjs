@@ -7,6 +7,13 @@
 // own prompt for the next run). They pipe JSON here instead.
 //
 // Usage: write-payload.mjs <stage> <repo-key> [--file <path>]  <<<'{...}'
+//
+// --file is *input*: it names a file to read the payload from. The payload is still written to the
+// state directory, so a stage written with --file is indistinguishable from one written from stdin
+// and is recovered by a resume like any other. An earlier revision treated --file as the output path
+// too, which silently wrote a profile outside state where nothing could find it — the exact
+// success-marker-over-a-total-miss failure this pipeline exists to prevent, reproduced in its own
+// tooling during the first live run.
 
 import { readFileSync } from 'node:fs';
 import { basename } from 'node:path';
@@ -62,12 +69,8 @@ if (!result.ok) {
   process.exit(1);
 }
 
-const target = explicitPath || `${repoStateDir(key)}/${stage}.json`;
+// Always into state, regardless of where the payload was read from.
+const target = `${repoStateDir(key)}/${stage}.json`;
 writeJson(target, payload);
-
-if (!explicitPath) {
-  setRepoStage(key, stage, 'done');
-  process.stderr.write(`ok ${stage} -> ${basename(target)}\n`);
-} else {
-  process.stderr.write(`ok ${stage} -> ${target}\n`);
-}
+setRepoStage(key, stage, 'done');
+process.stderr.write(`ok ${stage} -> ${basename(target)}\n`);

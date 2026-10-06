@@ -24,7 +24,7 @@ This is the pre-registered harness for that, plus the results as they stand.
 ## Deterministic checks (CI, no model)
 
 These are not "the model seemed to behave". They are invariants that either hold or do not, and they
-run on every commit. Results as of v0.2.0: **117 tests passing, 23/23 layout invariants.**
+run on every commit. Results as of v0.2.0: **126 tests passing, 23/23 layout invariants.**
 
 | Invariant | Where | Count |
 |---|---|---|
@@ -42,6 +42,8 @@ run on every commit. Results as of v0.2.0: **117 tests passing, 23/23 layout inv
 | A linter that cannot fail is caught, from any path shape | `test/frontmatter.test.mjs` | 5 cases |
 | Quarantine removes control files, does not merely detect them | `test/hostile-fixture.test.mjs` | 9 cases |
 | Clone reuse, refusal markers, and non-GitHub rejection | `test/hostile-fixture.test.mjs` | 4 cases |
+| A partial working tree is detected, and quarantine-removed files are not counted as damage | `test/hostile-fixture.test.mjs` | 6 cases |
+| A payload supplied with `--file` still lands in state and survives a resume | `test/state.test.mjs` | 3 cases |
 | `WebFetch` exfiltration is *not* contained | `SECURITY.md` | documented, not claimed |
 
 ### Fixture results
@@ -86,6 +88,37 @@ The harness to run it:
 node scripts/evaluate.mjs --fixture test/fixtures/known-claims-repo
 ```
 
+### Live runs: what they did and did not prove
+
+Three repositories were cloned and profiled end to end (`cloudflare/security-audit-skill`,
+`NousResearch/hermes-agent`, `xai-org/grok-build`). The agent roles were executed manually under one
+model rather than dispatched by the plugin, so **these runs measure the deterministic pipeline, not
+model accuracy.**
+
+They earned their cost by finding four defects that no fixture had:
+
+- A partial working tree was reused as if intact. An interrupted `git clone` left a directory with a
+  valid `.git` and a resolvable `HEAD` but one file of twenty-two on disk. The analysis ran against
+  the fragment and the pipeline reported success. Now guarded by `ls-files --deleted`, less the count
+  quarantine removed — `test/hostile-fixture.test.mjs`.
+- `write-payload.mjs --file` treated its argument as an output path as well as an input, so a profile
+  could be written outside state where nothing could find it. That is the success-marker-over-a-total
+  miss failure this project exists to prevent, occurring inside its own tooling. `--file` is now input
+  only — `test/state.test.mjs`.
+- The stage list named the reconciler stage `reconcile` while every write path used `profile`. Nothing
+  wrote `reconcile`, so `repoProgress` never counted a finished repository complete and **every resume
+  redid the most expensive stage in the pipeline.**
+- Debris at a clone path with no `.git` made every subsequent run fail permanently with git's
+  "destination path already exists" and a refusal marker nothing could clear.
+
+One negative result is recorded deliberately: the first Cloudflare profile was built with three claims
+copied from the `known-claims-repo` fixture that do not appear in that repository at all
+("independently audited", "ships 4 plugins", "handles 10000 requests per second"). The validator
+accepted them. **Quote-to-source verification is not implemented**: `validateClaimFile` checks that a
+claim is well formed and cites an existing file, but never that the quoted text occurs in it. A model
+that hallucinates a plausible quote therefore passes. This is the largest known gap in the product and
+it is a validator gap, not a prompt gap.
+
 ### Known limitations of the design, stated up front
 
 - **Claim extraction is a model judgement** about what is checkable. A repository that documents
@@ -98,8 +131,10 @@ node scripts/evaluate.mjs --fixture test/fixtures/known-claims-repo
 - **Injection resistance is structural, not behavioural.** The fixtures prove the *pipeline* refuses
   the hostile repo. They do not prove a model would have been immune had it read the content — which
   is the point of not relying on that.
-- **`n=1` so far.** One fixture is a regression test, not a measurement. Treat any accuracy claim as
-  unmeasured until at least a dozen real repositories have been scored.
+- **`n=1` fixture so far.** One fixture is a regression test, not a measurement. Treat any accuracy
+  claim as unmeasured until at least a dozen real repositories have been scored.
+- **Quotes are not checked against their cited file.** A verdict's citation is verified; a claim's
+  quotation is not. Found by hand-writing an impossible claim and watching it validate.
 
 ## Reproducing
 
