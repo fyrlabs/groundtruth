@@ -53,6 +53,7 @@ function profile(cited, { tier = 'code-verified', agent = 'technical-verifier' }
     prose: { what_it_does: 'a'.repeat(30), how_it_works: 'b'.repeat(30), verdict: 'c'.repeat(30), analyst_notes: '' },
     claims: [{
       claim: 'x', type: 'count', tier, evidence: 'e', cited_files: [cited], downgrade: [], correlated: false,
+      quote: 'Zero runtime dependencies.', source: { path: cited === 'a' ? 'src/index.ts' : cited, line: 1 },
       verdicts: [{ agent, tier, cited_files: [cited], summary: 's' }],
     }],
     coverage: { claims_total: 1, verified: tier === 'code-verified' ? 1 : 0, self_reported: 0, contradicted: 0, unverifiable: tier === 'code-verified' ? 0 : 1, uncovered: 0 },
@@ -68,7 +69,7 @@ function runHook(script, input, env) {
 
 export default ({ test, assert }) => {
   test('a verdict naming a file the agent never read is rejected', () => {
-    withInstrumentedClone({ 'README.md': '# doc\n', 'src/index.ts': 'export {};\n' }, ['README.md'], () => {
+    withInstrumentedClone({ 'README.md': '# doc\nZero runtime dependencies.\n', 'src/index.ts': 'export {};\nZero runtime dependencies.\n' }, ['README.md'], () => {
       const result = validateProfile(profile('src/index.ts'), { key: KEY, enforceReads: true });
       assert.ok(!result.ok, 'a citation absent from the read log was accepted');
       assert.ok(result.errors.some((e) => /read log/.test(e)), `expected a read-log error, got: ${result.errors.join('; ')}`);
@@ -76,14 +77,14 @@ export default ({ test, assert }) => {
   });
 
   test('a verdict naming a file the agent did read is accepted', () => {
-    withInstrumentedClone({ 'src/index.ts': 'export {};\n' }, ['src/index.ts'], () => {
+    withInstrumentedClone({ 'src/index.ts': 'export {};\nZero runtime dependencies.\n' }, ['src/index.ts'], () => {
       const result = validateProfile(profile('src/index.ts'), { key: KEY, enforceReads: true });
       assert.ok(result.ok, `a legitimate citation was rejected: ${result.errors.join('; ')}`);
     });
   });
 
   test('a citation is checked against the agent that made it, not any agent', () => {
-    withInstrumentedClone({ 'README.md': '# doc\n', 'src/index.ts': 'export {};\n' }, ['src/index.ts'], () => {
+    withInstrumentedClone({ 'README.md': '# doc\nZero runtime dependencies.\n', 'src/index.ts': 'export {};\nZero runtime dependencies.\n' }, ['src/index.ts'], () => {
       // The read happened, but not by this agent — so its citation must not be honoured.
       const result = validateProfile(profile('README.md', { agent: 'conflicts-verifier' }), { key: KEY, enforceReads: true });
       assert.ok(!result.ok, 'a verdict was credited with a read performed by a different agent');
@@ -92,7 +93,7 @@ export default ({ test, assert }) => {
   });
 
   test('a missing read log fails closed rather than silently passing', () => {
-    withInstrumentedClone({ 'src/index.ts': 'export {};\n' }, ['src/index.ts'], (clone, repoState) => {
+    withInstrumentedClone({ 'src/index.ts': 'export {};\nZero runtime dependencies.\n' }, ['src/index.ts'], (clone, repoState) => {
       // Remove the log entirely: instrumentation is absent, so the check must not silently pass.
       const log = join(repoState, 'reads.jsonl');
       if (existsSync(log)) unlinkSync(log);
@@ -131,7 +132,7 @@ export default ({ test, assert }) => {
   });
 
   test('a directory cannot be cited as evidence', () => {
-    withInstrumentedClone({ 'src/index.ts': 'export {};\n' }, [], () => {
+    withInstrumentedClone({ 'src/index.ts': 'export {};\nZero runtime dependencies.\n' }, [], () => {
       for (const bad of ['.', 'src', 'src/']) {
         const result = validateProfile(profile(bad), { key: KEY, enforceReads: false });
         assert.ok(!result.ok, `a directory was accepted as a citation: ${bad}`);
@@ -141,7 +142,7 @@ export default ({ test, assert }) => {
   });
 
   test('a symlink escaping the clone root is rejected', () => {
-    withInstrumentedClone({ 'src/index.ts': 'export {};\n' }, [], (clone) => {
+    withInstrumentedClone({ 'src/index.ts': 'export {};\nZero runtime dependencies.\n' }, [], (clone) => {
       try {
         symlinkSync('/etc/passwd', join(clone, 'src/escape.ts'));
       } catch {
@@ -154,7 +155,7 @@ export default ({ test, assert }) => {
   });
 
   test('git internals are not citable as project content', () => {
-    withInstrumentedClone({ 'README.md': '# doc\n' }, [], (clone) => {
+    withInstrumentedClone({ 'README.md': '# doc\nZero runtime dependencies.\n' }, [], (clone) => {
       mkdirSync(join(clone, '.git'), { recursive: true });
       writeFileSync(join(clone, '.git', 'config'), '[core]\n');
       const result = validateProfile(profile('.git/config'), { key: KEY, enforceReads: false });
@@ -163,7 +164,7 @@ export default ({ test, assert }) => {
   });
 
   test('correlation compares real paths, so capitalisation cannot defeat it', () => {
-    withInstrumentedClone({ 'README.md': '# doc\n' }, [], () => {
+    withInstrumentedClone({ 'README.md': '# doc\nZero runtime dependencies.\n' }, [], () => {
       const mk = (agent, cited) => ({ agent, tier: 'code-verified', cited_files: [cited], summary: 's' });
       const p = profile('README.md');
       p.claims[0].cited_files = ['README.md', 'readme.MD', './README.md'];
@@ -179,7 +180,7 @@ export default ({ test, assert }) => {
   });
 
   test('partial overlap between agents is disclosed rather than accepted silently', () => {
-    withInstrumentedClone({ 'README.md': '# doc\n', 'LICENSE': 'MIT\n' }, [], () => {
+    withInstrumentedClone({ 'README.md': '# doc\nZero runtime dependencies.\n', 'LICENSE': 'MIT\n' }, [], () => {
       const p = profile('README.md');
       p.claims[0].cited_files = ['README.md', 'LICENSE'];
       p.claims[0].verdicts = [
@@ -197,7 +198,7 @@ export default ({ test, assert }) => {
   });
 
   test('canonical path identity agrees across spellings', () => {
-    withInstrumentedClone({ 'src/index.ts': 'export {};\n' }, [], (clone) => {
+    withInstrumentedClone({ 'src/index.ts': 'export {};\nZero runtime dependencies.\n' }, [], (clone) => {
       assert.equal(canonicalIn(clone, 'src/index.ts'), canonicalIn(clone, './src/index.ts'));
       assert.equal(canonicalIn(clone, 'src/index.ts'), canonicalIn(clone, 'src/../src/index.ts'));
     });

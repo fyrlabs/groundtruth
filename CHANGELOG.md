@@ -7,6 +7,38 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- **Claim quotations are verified against the file they cite**, on the `profile` rather than on the
+  intermediate analysis payload. A claim now requires `quote` and `source`, and the quotation must occur
+  in the cited file within three lines of the line it cites. Transcription tolerance is preserved for
+  line wrapping and typographic quotes, because an agent reproducing a rendered Markdown file
+  legitimately loses both.
+
+The gate was previously on the wrong artifact: `analysis.json` quotes were checked, and
+`analysis.json` quotes are never rendered. The gap was found by hand-writing impossible claims for
+`cloudflare/security-audit-skill` — including a paraphrase of a claim believed to be genuine — and
+watching every check pass and the claims reach a report.
+
+An adversarial review of the first version of this check found it defeatable in ways that made it
+theatre, and each bypass is now a regression test:
+
+- A one-character quote matched every line of a prose file, so `text: "audited by a third party"` with
+  `quote: "e"` passed. Quotes must now span at least two words and eight non-space characters.
+- A non-string `source.path` returned without recording an error, so the claim passed with zero errors
+  — the project's own recurring failure class in a new place. Every path now fails closed.
+- A quote padded with 300 newlines reached a 1002-line positional tolerance, which is not a citation.
+  The span is counted from non-blank lines and capped.
+- The `exact` matching rule joined lines with a space, so it was not exact.
+- The repo key became the containment root for every cited file while arriving unchecked on argv.
+
+`test/quote.test.mjs` adds 31 cases including all six regressions.
+
+**Breaking:** profiles written before this change no longer validate. They must be rebuilt from their
+analysis payloads rather than patched — the reconciler now carries each quotation into its profile
+claim. This is deliberate: a profile that cannot show the text it was verified against is exactly the
+artifact this product exists to stop publishing.
+
 ### Changed
 
 - **Relicensed from MIT to Apache-2.0**, matching the other four repositories in the `fyrlabs` org

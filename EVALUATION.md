@@ -24,7 +24,7 @@ This is the pre-registered harness for that, plus the results as they stand.
 ## Deterministic checks (CI, no model)
 
 These are not "the model seemed to behave". They are invariants that either hold or do not, and they
-run on every commit. Results as of v0.2.0: **126 tests passing, 25/25 layout invariants.**
+run on every commit. Results as of v0.2.0: **157 tests passing, 26/26 layout invariants.**
 
 | Invariant | Where | Count |
 |---|---|---|
@@ -44,6 +44,8 @@ run on every commit. Results as of v0.2.0: **126 tests passing, 25/25 layout inv
 | Clone reuse, refusal markers, and non-GitHub rejection | `test/hostile-fixture.test.mjs` | 4 cases |
 | A partial working tree is detected, and quarantine-removed files are not counted as damage | `test/hostile-fixture.test.mjs` | 6 cases |
 | A payload supplied with `--file` still lands in state and survives a resume | `test/state.test.mjs` | 3 cases |
+| A claim's quote occurs in the file it cites, near the line it cites | `test/quote.test.mjs` | 31 cases |
+| Every bypass found in the adversarial review of that check fails closed | `test/quote.test.mjs` | 6 regressions |
 | `WebFetch` exfiltration is *not* contained | `SECURITY.md` | documented, not claimed |
 
 ### Fixture results
@@ -111,13 +113,18 @@ They earned their cost by finding four defects that no fixture had:
 - Debris at a clone path with no `.git` made every subsequent run fail permanently with git's
   "destination path already exists" and a refusal marker nothing could clear.
 
-One negative result is recorded deliberately: the first Cloudflare profile was built with three claims
-copied from the `known-claims-repo` fixture that do not appear in that repository at all
-("independently audited", "ships 4 plugins", "handles 10000 requests per second"). The validator
-accepted them. **Quote-to-source verification is not implemented**: `validateClaimFile` checks that a
-claim is well formed and cites an existing file, but never that the quoted text occurs in it. A model
-that hallucinates a plausible quote therefore passes. This is the largest known gap in the product and
-it is a validator gap, not a prompt gap.
+One negative result is recorded deliberately: the first Cloudflare profile was built with claims copied
+from the `known-claims-repo` fixture that do not appear in that repository at all — including
+"Independently audited by a third party", "Ships 4 plugins" and "Handles 10000 requests per second",
+plus a genuine-looking paraphrase of a claim I believed was real. The validator accepted every one, and
+the whole set reached a rendered report.
+
+That gap is now closed. A claim's quotation is verified against the file it cites, on the **profile**
+rather than on the intermediate analysis payload, because the profile is the artifact a reader sees.
+The first implementation of the check was itself adversarial-reviewed and found defeatable — a
+one-character quote matched any prose file, a non-string path passed with zero errors, and a
+newline-padded quote reached a 1002-line positional tolerance — so the check earned its name rather than
+assuming it. `test/quote.test.mjs` carries 24 cases including every bypass.
 
 ### Known limitations of the design, stated up front
 
@@ -133,8 +140,9 @@ it is a validator gap, not a prompt gap.
   is the point of not relying on that.
 - **`n=1` fixture so far.** One fixture is a regression test, not a measurement. Treat any accuracy
   claim as unmeasured until at least a dozen real repositories have been scored.
-- **Quotes are not checked against their cited file.** A verdict's citation is verified; a claim's
-  quotation is not. Found by hand-writing an impossible claim and watching it validate.
+- **A quotation is verified; intent is not.** The quote is proved to occur in the cited file and near
+  the cited line. Whether the agent read it *for that reason* remains unverifiable, and that is the
+  residual failure mode of the whole design.
 
 ## Reproducing
 

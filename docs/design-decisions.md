@@ -10,6 +10,38 @@ Amending an entry? Add a dated amendment block. Do not rewrite history.
 
 ---
 
+## A published claim carries the quotation it was verified against
+
+**Status:** ratified
+
+**Decision.** `profile.json` claims require a `quote` and a `source`, and `validateProfile` checks
+the quote against the file it cites. The check fails closed: with no repo key or no clone, claims are
+refused rather than accepted unverified.
+
+**Why.** Claim quoting was validated only in `analysis.json`, whose quotes are never rendered. The
+artifact a reader actually sees carried no verified text at all, so the gate protected the wrong file.
+The gap was found by hand-writing three impossible claims for `cloudflare/security-audit-skill` —
+"independently audited by a third party", "ships 4 plugins", "handles 10000 requests per second" — and
+watching every check pass and the claims reach a rendered report.
+
+An adversarial review of the first implementation of this check found that the check itself was
+defeatable in ways that made it theatre: a one-character quote matched every line of a prose file, so
+`text: "audited by a third party"` with `quote: "e"` passed; a non-string `source.path` returned
+without recording an error, so the claim passed with zero errors; and a quote padded with 300 newlines
+reached a 1002-line positional tolerance, which is not a citation. All three now fail closed and are
+covered by tests.
+
+**Consequences.**
+- A quote must span at least two words and eight non-space characters, and must begin within three lines
+  of the line it cites. Transcription tolerance is preserved for line wrapping and typographic quotes,
+  because an agent reproducing a rendered Markdown file legitimately loses both, and rejecting that
+  would push authors toward paraphrasing a quote until it stopped being one.
+- Profiles written before this decision no longer validate. They must be rebuilt, not patched: the
+  reconciler now carries the quotation from `analysis.json` into each profile claim.
+- The check is on the artifact the reader sees. Intermediate payloads are checked too, but they are not
+  where the guarantee lives.
+
+
 ## 1. Ship as a plugin; drop the npx installer
 
 **Decision.** Groundtruth is a Claude Code plugin installed via

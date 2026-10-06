@@ -60,7 +60,7 @@ if (!VALIDATED_STAGES.has(stage)) {
 const result = stage === 'profile'
   ? validateProfile(payload, { key, enforceReads: true })
   : stage === 'analysis'
-    ? validateClaimFile(payload)
+    ? validateClaimFile(payload, { key })
     : validateVerdictFile(payload, { stage });
 
 if (!result.ok) {

@@ -27,7 +27,7 @@ function profile(overrides = {}) {
     coverage: { claims_total: 2, verified: 1, self_reported: 1, contradicted: 0, unverifiable: 0, uncovered: 0 },
     claims: [
       { claim: 'supports 12 platforms', type: 'compatibility', tier: 'code-verified', evidence: 'installers/ has 12 platform entries', cited_files: ['installers/'], downgrade: [], correlated: false, verdicts: [{ agent: 'conflicts-verifier', tier: 'code-verified', cited_files: ['installers/'], summary: 'counted 12' }] },
-      { claim: 'zero known vulnerabilities', type: 'security', tier: 'self-reported', evidence: 'stated in README, no audit referenced', cited_files: ['README.md'], downgrade: ['risk-of-bias'], correlated: false, verdicts: [{ agent: 'community-verifier', tier: 'unverifiable', cited_files: ['README.md'], summary: 'no advisory data' }] },
+      { claim: 'zero known vulnerabilities', type: 'security', tier: 'self-reported', evidence: 'stated in README, no audit referenced', cited_files: ['README.md'], quote: 'No audit referenced.', source: { path: 'README.md', line: 3 }, downgrade: ['risk-of-bias'], correlated: false, verdicts: [{ agent: 'community-verifier', tier: 'unverifiable', cited_files: ['README.md'], summary: 'no advisory data' }] },
     ],
     ...overrides,
   };
@@ -123,15 +123,19 @@ export default ({ test, assert }) => {
     // so the fixture needs a real one.
     const clone = join(dir, 'clones', 'acme.tool');
     mkdirSync(clone, { recursive: true });
-    for (const name of ['README.md', 'SECURITY.md', 'install.js', 'LICENSE']) {
-      writeFileSync(join(clone, name), 'x\n');
-    }
+    // Real text, because a profile claim's quotation is verified against the file it cites.
+    writeFileSync(join(clone, 'README.md'), 'x\nSupports 12 platforms.\nNo audit referenced.\n');
+    writeFileSync(join(clone, 'SECURITY.md'), 'Report privately.\n');
+    writeFileSync(join(clone, 'install.js'), 'install\n');
+    writeFileSync(join(clone, 'LICENSE'), 'MIT License\nPermission is hereby granted.\n');
     mkdirSync(join(clone, 'agents'), { recursive: true });
     mkdirSync(join(clone, 'src'), { recursive: true });
     try {
       const p = profile();
       // Claims cite files that must exist for the render to proceed at all.
       p.claims[0].cited_files = ['README.md'];
+      p.claims[0].quote = 'Supports 12 platforms.';
+      p.claims[0].source = { path: 'README.md', line: 2 };
       p.claims[0].verdicts[0].cited_files = ['README.md'];
       p.coverage = { claims_total: 2, verified: 1, self_reported: 1, contradicted: 0, unverifiable: 0, uncovered: 0 };
       writeJson(join(paths.reposDir(), 'acme.tool', 'profile.json'), p);

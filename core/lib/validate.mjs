@@ -12,7 +12,7 @@
 //   - Correlated verifier agreement. Two verifiers citing the same file is flagged, because
 //     agreement that shares a source carries no independent weight.
 
-import { readFileSync, realpathSync, statSync } from 'node:fs';
+import { existsSync, readFileSync, realpathSync, statSync } from 'node:fs';
 import { dirname, join, relative, resolve, sep } from 'node:path';
 import { repoDir, stateRoot } from './paths.mjs';
 
@@ -31,6 +31,15 @@ const LIMITS = {
   platforms: 20,
   conflicts: 20,
 };
+// Refuse to load an arbitrarily large file just to search it for a quoted string.
+const QUOTE_FILE_CAP = 4 * 1024 * 1024;
+// A citation is positional evidence: the quotation should begin at the line cited. This much slack
+// covers an off-by-one and a quote whose first line follows a heading, and no more — at 12 lines a
+// padded quote still matched four lines away from where it was cited.
+const MAX_QUOTE_LINE_SPAN = 3;
+// Two words and eight non-space characters: enough to be a quotation, not enough to be found anywhere.
+const MIN_QUOTE_TOKENS = 2;
+const MIN_QUOTE_CHARS = 8;
 
 function fail(errors, msg) {
   errors.push(msg);
@@ -137,6 +146,7 @@ function repoStateDir(key) {
 
 export function validateProfile(profile, { key, enforceReads = true } = {}) {
   const errors = [];
+  const files = new Map();
   const root = repoDir(key);
 
   if (profile.schema_version !== 1) fail(errors, 'profile.schema_version must be 1');
@@ -158,6 +168,11 @@ export function validateProfile(profile, { key, enforceReads = true } = {}) {
     checkString(errors, `${where}.claim`, c.claim, 1, LIMITS.claimText);
     checkString(errors, `${where}.evidence`, c.evidence, 1, LIMITS.summary);
     checkTier(errors, where, c.tier);
+
+    // The profile is the artifact that gets rendered, so a claim without a verified quotation is the
+    // one shape that reaches the reader unevidenced. Quoting was previously checked only in
+    // analysis.json, whose quotes are never printed — the gate protected the wrong file.
+    verifyQuote(errors, where, c, root, files);
 
     const verdicts = Array.isArray(c.verdicts) ? c.verdicts : [];
     if (verdicts.length === 0) {
@@ -291,12 +306,189 @@ export function validateProfile(profile, { key, enforceReads = true } = {}) {
   return { ok: errors.length === 0, errors, computed };
 }
 
-export function validateClaimFile(payload) {
+// Compare text under progressively looser equivalence, returning the name of the rule that matched or
+// null. The order matters: exact first, then whitespace, then typography. A model transcribing a line
+// out of a Markdown file legitimately loses the file's line wrapping and may normalise curly quotes to
+// ASCII. Those are transcription artefacts, not fabrication, and rejecting them would push authors
+// toward paraphrasing a quote until it stopped being a quote.
+const EQUIVALENCE = [
+  ['exact', (text) => text, '\n'],
+  ['whitespace', (text) => text.replace(/\s+/g, ' ').trim(), ' '],
+  // U+00A0 is already \s, so the whitespace rule above has normalised it and no nbsp pass is needed.
+  ['whitespace+typography', (text) => text
+    .replace(/\s+/g, ' ').trim()
+    .replace(/[\u2018\u2019]/g, "'")
+    .replace(/[\u201c\u201d]/g, '"')
+    .replace(/[\u2013\u2014]/g, '-'), ' '],
+];
+
+function normaliseNewlines(text) {
+  return text.replace(/\r\n?/g, '\n');
+}
+
+// Fold the file line by line while recording, for every character of the folded text, the line it came
+// from. Folding the whole document at once destroys the newlines, so an offset in the folded string no
+// longer identifies a line — and citing the wrong line is precisely what this check exists to catch.
+function foldWithLineMap(lines, fold, joiner) {
+  const segments = [];
+  const lineOf = [];
+  for (let i = 0; i < lines.length; i++) {
+    const folded = fold(lines[i]);
+    if (!folded) continue;
+    if (segments.length) {
+      segments.push(joiner);
+      lineOf.push(i + 1);
+    }
+    for (let j = 0; j < folded.length; j++) lineOf.push(i + 1);
+    segments.push(folded);
+  }
+  return { folded: segments.join(''), lineOf };
+}
+
+// Locate a quote in a file, returning { line, rule } for the occurrence nearest the cited line.
+// Proximity matters as much as presence: a claim citing README line 1 and quoting line 500 is not
+// fabricating, but it is citing a file that does not support the citation as written, and the reader
+// of the report has no way to tell.
+function locateQuote(entry, quote, citedLine) {
+  const lines = entry.lines;
+  const target = normaliseNewlines(quote);
+  let best = null;
+
+  for (const [rule, fold, joiner] of EQUIVALENCE) {
+    const needle = fold(target);
+    if (!needle) return null;
+    let view = entry.folded.get(rule);
+    if (!view) {
+      view = foldWithLineMap(lines, fold, joiner);
+      entry.folded.set(rule, view);
+    }
+    const { folded, lineOf } = view;
+    let from = 0;
+    for (;;) {
+      const at = folded.indexOf(needle, from);
+      if (at === -1) break;
+      const line = lineOf[at] ?? 1;
+      if (!best || Math.abs(line - citedLine) < Math.abs(best.line - citedLine)) best = { line, rule };
+      from = at + 1;
+    }
+    if (best) break;
+  }
+  return best;
+}
+
+// A claim's quote must actually occur in the file it cites. Every other field in a claim payload can be
+// written by a model, and a plausible invented quote — "independently audited by a third party",
+// "handles 10000 requests per second" — passes every structural check the validator used to make.
+// Found by hand-writing impossible claims for a real repository and watching the pipeline accept them.
+// This is the check that turns a citation from an assertion into evidence.
+export function verifyQuote(errors, where, claim, root, files = new Map()) {
+  const cited = claim?.source?.path;
+  const citedLine = claim?.source?.line;
+  const quote = claim?.quote;
+
+  if (typeof cited !== 'string' || !cited) {
+    fail(errors, `${where}.source.path: required and must be a string, got ${JSON.stringify(cited)}`);
+    return false;
+  }
+  if (!Number.isInteger(citedLine) || citedLine < 1) {
+    fail(errors, `${where}.source.line: must be a positive integer, got ${JSON.stringify(citedLine)}`);
+    return false;
+  }
+  if (typeof quote !== 'string') {
+    fail(errors, `${where}.quote: must be a string, got ${typeof quote}`);
+    return false;
+  }
+  // A one-character quote matches almost any file, so `text: "audited by a third party"` with
+  // `quote: "e"` passes: measured, every line of a prose file accepted a single-vowel quote. A quote
+  // must carry enough text to be evidence, not enough to be found.
+  const tokens = quote.trim().split(/\s+/).filter(Boolean);
+  const significant = quote.replace(/\s+/g, '').length;
+  if (tokens.length < MIN_QUOTE_TOKENS || significant < MIN_QUOTE_CHARS) {
+    fail(errors, `${where}.quote: ${JSON.stringify(quote)} is too short to be evidence — a quote must span at least 2 words and 8 non-space characters`);
+    return false;
+  }
+  if (!quote.trim()) {
+    fail(errors, `${where}.quote: empty — a quote is the text the repository contains, and there is none`);
+    return false;
+  }
+
+  const real = checkCitedFile(errors, `${where}.source.path`, cited, root);
+  if (!real) return false;
+
+  let stat;
+  try {
+    stat = statSync(real);
+  } catch {
+    return fail(errors, `${where}.source.path: cited file ${JSON.stringify(cited)} could not be read`);
+  }
+  // Refuse to slurp a multi-gigabyte blob into memory to search it for a string.
+  if (stat.size > QUOTE_FILE_CAP) {
+    return fail(errors, `${where}.source.path: cited file is ${stat.size} bytes, over the ${QUOTE_FILE_CAP} cap for quote verification`);
+  }
+
+  let entry = files.get(real);
+  if (entry === undefined) {
+    let read = null;
+    try {
+      read = readFileSync(real, 'utf8');
+    } catch {
+      return fail(errors, `${where}.source.path: cited file ${JSON.stringify(cited)} could not be read`);
+    }
+    // A NUL byte means this is not a text document. Searching binary for a substring proves nothing.
+    entry = read.includes('\u0000')
+      ? { binary: true }
+      : { lines: normaliseNewlines(read).split('\n'), folded: new Map() };
+    files.set(real, entry);
+  }
+  if (entry.binary) {
+    return fail(errors, `${where}.source.path: cited file ${JSON.stringify(cited)} is not a text file`);
+  }
+  const lineCount = entry.lines.length;
+  if (citedLine > lineCount) {
+    return fail(errors, `${where}.source.line: line ${citedLine} is past the end of ${JSON.stringify(cited)} (${lineCount} lines)`);
+  }
+
+  const hit = locateQuote(entry, quote, citedLine);
+  if (!hit) {
+    const preview = quote.length > 60 ? `${quote.slice(0, 57)}...` : quote;
+    return fail(errors, `${where}.quote: ${JSON.stringify(preview)} does not appear in ${JSON.stringify(cited)} — a quote must be text the repository actually contains`);
+  }
+
+  // Allow a quote that spans lines, plus a little slack for an off-by-one citation. Counted from
+  // non-blank lines and capped: a quote padded with newlines otherwise reached a 1002-line tolerance,
+  // which makes the citation positionally meaningless. Blank lines are padding, not content.
+  const contentLines = normaliseNewlines(quote).split('\n').filter((l) => l.trim()).length;
+  const span = Math.min(contentLines + 2, MAX_QUOTE_LINE_SPAN);
+  if (Math.abs(hit.line - citedLine) > span) {
+    return fail(errors, `${where}.source.line: cited line ${citedLine} but the quote is on line ${hit.line} of ${JSON.stringify(cited)}`);
+  }
+  return true;
+}
+
+export function validateClaimFile(payload, { key } = {}) {
+  // One pass over a file per claim is quadratic in the claims a hostile payload can send: measured at
+  // ~10s for 200 claims against a 4 MiB file. Cache per validation run.
+  const files = new Map();
   const errors = [];
   const claims = payload?.claims;
   if (!Array.isArray(claims)) {
     return { ok: false, errors: ['claims: missing or not an array — a Markdown block is not an acceptable payload'] };
   }
+  // Fail closed. Without a clone there is nothing to check a quote against, and a validator that
+  // quietly skips the one check that distinguishes evidence from assertion is worse than no validator.
+  if (!key) {
+    return { ok: false, errors: ['claims: quote verification needs the repo key so the cited file can be read — refusing to accept unverified claims'] };
+  }
+  // The key becomes the containment root for every cited file, so its shape is a security property,
+  // not a convenience. Taken straight off argv it must satisfy the same shape repoKey() produces.
+  if (!/^[a-z0-9.-]+\.[a-z0-9._-]+$/.test(key)) {
+    return { ok: false, errors: [`claims: repo key ${JSON.stringify(key)} is not a valid owner.repo key, so no clone can be identified`] };
+  }
+  const root = repoDir(key);
+  if (!existsSync(root)) {
+    return { ok: false, errors: [`claims: no clone at ${root} — claims cannot be verified against a repository that is not present`] };
+  }
+
   if (claims.length > LIMITS.claims) fail(errors, `claims: ${claims.length} exceeds the ${LIMITS.claims} cap (possible flooding)`);
   for (const [i, c] of claims.entries()) {
     const where = `claims[${i}]`;
@@ -305,6 +497,7 @@ export function validateClaimFile(payload) {
     checkString(errors, `${where}.quote`, c.quote, 1, 1000);
     if (!c.source?.path) fail(errors, `${where}.source.path: required`);
     if (!Number.isInteger(c.source?.line) || c.source.line < 1) fail(errors, `${where}.source.line: must be a positive integer`);
+    verifyQuote(errors, where, c, root, files);
   }
   return { ok: errors.length === 0, errors };
 }

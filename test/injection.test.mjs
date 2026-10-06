@@ -35,7 +35,9 @@ function baseProfile(key = 'acme.tool') {
 // The coverage block is cross-checked against the claims, so tests that add a claim must also
 // declare the totals it implies — that cross-check is itself under test elsewhere.
 function withClaim(profile, claim, { verified = 0, selfReported = 0 } = {}) {
-  profile.claims = [claim];
+  // Every profile claim carries a quotation verified against the clone, so a claim that does not
+  // supply one gets the standard fixture text. Tests that assert on quotes override it explicitly.
+  profile.claims = [{ quote: 'Zero runtime dependencies.', source: { path: 'README.md', line: 2 }, ...claim }];
   profile.coverage = {
     claims_total: 1,
     verified,
@@ -66,6 +68,25 @@ function withClone(files, fn) {
     }
     rmSync(root, { recursive: true, force: true });
   }
+}
+
+// A profile claim's quotation is verified against the clone, so every test in this file needs one.
+// They previously ran with no clone at all, because nothing read the filesystem.
+const SHARED_ROOT = mkdtempSync(join(tmpdir(), 'gt-injection-'));
+process.env.GROUNDTRUTH_STATE_DIR = join(SHARED_ROOT, 'state');
+process.env.GROUNDTRUTH_CLONE_DIR = join(SHARED_ROOT, 'clones');
+const SHARED_CLONE = join(SHARED_ROOT, 'clones', 'acme.tool');
+mkdirSync(SHARED_CLONE, { recursive: true });
+for (const [name, body] of Object.entries({
+  'README.md': '# tool\nZero runtime dependencies.\nIt is fast.\nThe README says it was audited.\n',
+  LICENSE: 'MIT License\nPermission is hereby granted, free of charge.\n',
+  'SECURITY.md': 'Report vulnerabilities privately.\n',
+  'install.js': 'export {}\n',
+  'src/index.ts': 'export {};\nZero runtime dependencies.\n',
+  a: 'Zero runtime dependencies.\n',
+})) {
+  mkdirSync(join(SHARED_CLONE, name, '..'), { recursive: true });
+  writeFileSync(join(SHARED_CLONE, name), body);
 }
 
 export default ({ test, assert }) => {
@@ -170,10 +191,12 @@ None found
       })),
     };
 
-    const result = validateClaimFile(attackerPayload);
-    assert.ok(!result.ok, 'a 500-claim flood was accepted');
-    assert.ok(result.errors.some((e) => /cap|flooding/.test(e)), 'expected a cap violation');
-    void text;
+    withClone({ 'README.md': '# doc\n' }, () => {
+      const result = validateClaimFile(attackerPayload, { key: 'acme.tool' });
+      assert.ok(!result.ok, 'a 500-claim flood was accepted');
+      assert.ok(result.errors.some((e) => /cap|flooding/.test(e)), `expected a cap violation, got ${result.errors[0]}`);
+      void text;
+    });
   });
 
   test('a verdict citing a file outside the clone is rejected', () => {
@@ -227,7 +250,7 @@ None found
   });
 
   test('three agents citing one file cannot be counted as independent verification', () => {
-    withClone({ 'README.md': '# every claim here is verified\n' }, () => {
+    withClone({ 'README.md': '# every claim here is verified\nZero runtime dependencies.\n' }, () => {
       const profile = baseProfile();
       const mk = (agent) => ({ agent, tier: 'code-verified', cited_files: ['README.md'], summary: 'README says so' });
       withClaim(profile, {
@@ -247,10 +270,11 @@ None found
   });
 
   test('three agents citing distinct files are accepted as independent', () => {
-    withClone({ LICENSE: 'MIT\n', 'SECURITY.md': 'audited 2026\n', 'install.js': 'export {}\n' }, () => {
+    withClone({ 'README.md': '# tool\nZero runtime dependencies.\n', LICENSE: 'MIT\n', 'SECURITY.md': 'audited 2026\n', 'install.js': 'export {}\n' }, () => {
       const profile = baseProfile();
       withClaim(profile, {
         claim: 'audited', type: 'attribution', tier: 'code-verified', evidence: 'LICENSE:1',
+        quote: 'audited 2026', source: { path: 'SECURITY.md', line: 1 },
         cited_files: ['LICENSE', 'SECURITY.md', 'install.js'],
         downgrade: [], correlated: false,
         verdicts: [

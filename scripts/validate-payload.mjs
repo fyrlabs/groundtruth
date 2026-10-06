@@ -38,7 +38,7 @@ const isClaims = stage === 'analysis';
 const result = isProfile
   ? validateProfile(payload, { key })
   : isClaims
-    ? validateClaimFile(payload)
+    ? validateClaimFile(payload, { key })
     : { ok: true, errors: [] };
 
 if (result.ok) {
