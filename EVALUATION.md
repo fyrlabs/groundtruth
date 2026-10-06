@@ -24,7 +24,7 @@ This is the pre-registered harness for that, plus the results as they stand.
 ## Deterministic checks (CI, no model)
 
 These are not "the model seemed to behave". They are invariants that either hold or do not, and they
-run on every commit. Results as of v0.2.0: **126 tests passing, 23/23 layout invariants.**
+run on every commit. Results as of v0.2.0: **126 tests passing, 25/25 layout invariants.**
 
 | Invariant | Where | Count |
 |---|---|---|

@@ -351,6 +351,20 @@ check('the resumable stage list and the write gate agree on stage names', () => 
   return `${resumable.length} resumable stages, all writable (${validated.length} validated)`;
 });
 
+check('every path in the package.json files allowlist exists', () => {
+  // The allowlist shipped "CLAUDE.md", which is not in the repository and which nothing required. npm
+  // ignores a non-matching entry without complaint and the packaging gate only asserted that required
+  // paths were present, so a manifest could reference files that do not exist while every gate passed
+  // — and AGENTS.md tells authors to verify that npm pack lists every directory the manifest references.
+  const pkg = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8'));
+  const dead = pkg.files.filter((f) => !existsSync(join(ROOT, f)));
+  if (dead.length) {
+    throw new Error(`package.json files lists paths that do not exist: ${dead.join(', ')}`);
+  }
+  // And the inverse: a directory the plugin needs at runtime but the allowlist omits ships broken.
+  return `${pkg.files.length} allowlisted paths, all present`;
+});
+
 check('every surface declares the same licence, and it matches the LICENSE file', () => {
   // The licence appeared in four places: LICENSE, package.json, plugin.json and marketplace.json. Any
   // one of them could be edited alone, and nothing would notice — npm, the plugin listing and the

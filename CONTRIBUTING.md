@@ -91,6 +91,18 @@ should be revertable as a unit.
 The body explains **why**, and records the attack or failure mode that motivated a fix. That is the
 part a reader cannot reconstruct from the diff. One item per line, however long; never hard-wrap.
 
+## Licensing
+
+This project is Apache-2.0. Inbound contributions are licensed under the same terms, which Apache-2.0
+§3 conditions on each contributor being covered by a Contributor License Agreement. There is no CLA to
+sign, because a sole author relicensing their own work needs no inbound grant — but **if this ever
+gains an outside contributor, that agreement becomes a prerequisite**, and the pull request cannot be
+merged without it. Add the CLA before accepting the first one, not after.
+
+Note the asymmetry: MIT is a single permission with no patent grant, so a relicense is a one-file
+change. Apache-2.0 grants a patent licence, so the outbound terms a contributor gives are wider than
+what MIT asked of them. Contributors should know that before they send a patch.
+
 ## Reporting a vulnerability
 
 Do not open a public issue. See [SECURITY.md](SECURITY.md) — a hostile fixture repository is far more

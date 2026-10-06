@@ -244,7 +244,9 @@ Repositories are now treated as hostile input throughout.
 ### Changed identity
 
 - Moved from `sathvikc/ground-truth` to **`fyrlabs/groundtruth`**. npm scope `@sathvikc` →
-  `@fyrlabs`. Copyright to fyrlabs and Groundtruth contributors.
+  `@fyrlabs`. Copyright to fyrlabs and Groundtruth contributors — as shipped in this release,
+  which is MIT-licensed. The project was relicensed to Apache-2.0 in a later release; see
+  [Unreleased].
 - Git history is unchanged: the original commits remain attributed to their author. Rewriting
   attribution in a project about provenance would be self-defeating.
 
