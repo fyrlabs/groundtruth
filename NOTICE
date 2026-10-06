@@ -1,5 +1,5 @@
 Groundtruth
-Copyright 2026 Fyr Labs
+Copyright 2026 fyrlabs
 
 This product has no bundled third-party software. It has zero runtime dependencies; every
 dependency is part of the Node.js standard library.

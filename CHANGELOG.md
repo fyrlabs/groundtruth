@@ -43,8 +43,11 @@ artifact this product exists to stop publishing.
 
 - **Relicensed from MIT to Apache-2.0**, matching the other four repositories in the `fyrlabs` org
   (`dead-drop`, `dead-drop-shell`, `mcp-docs`, `mcp-nexus`), which are all Apache-2.0. `LICENSE` is the
-  verbatim Apache 2.0 text, `NOTICE` follows the org's existing shape, and the README points at the
-  licence file rather than naming it inline.
+  verbatim Apache 2.0 text with the appendix filled in as `Copyright 2026 fyrlabs`, `NOTICE`
+  follows the org's existing shape, and the README points at the licence file rather than naming it
+  inline. The holder is spelled `fyrlabs`, matching the org, the npm scope and the plugin author; the
+  org's own repositories are inconsistent here (`dead-drop` writes `Fyr Labs`, `mcp-nexus` writes
+  `Fyrlabs`), which is why the spelling is asserted nowhere rather than left to drift again.
 - **Dropped the `author` field from `package.json`.** Three of the four sibling packages omit it; the
   one that declares it uses a personal name. The org is the attribution, recorded in `NOTICE`.
   `plugin.json` keeps `author` because a plugin listing needs a visible owner and the org has no
