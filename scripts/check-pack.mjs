@@ -44,6 +44,7 @@ const REQUIRED = [
   'SECURITY.md',
   'README.md',
   'LICENSE',
+  'NOTICE',
 ];
 
 // Present in the repo, must NOT ship. Run state and generated output are per-user, and shipping them

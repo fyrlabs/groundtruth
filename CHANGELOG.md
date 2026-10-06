@@ -7,6 +7,25 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+
+- **Relicensed from MIT to Apache-2.0**, matching the other four repositories in the `fyrlabs` org
+  (`dead-drop`, `dead-drop-shell`, `mcp-docs`, `mcp-nexus`), which are all Apache-2.0. `LICENSE` is the
+  verbatim Apache 2.0 text, `NOTICE` follows the org's existing shape, and the README points at the
+  licence file rather than naming it inline.
+- **Dropped the `author` field from `package.json`.** Three of the four sibling packages omit it; the
+  one that declares it uses a personal name. The org is the attribution, recorded in `NOTICE`.
+  `plugin.json` keeps `author` because a plugin listing needs a visible owner and the org has no
+  sibling plugin to copy from.
+- `verify-layout.mjs` asserts that `LICENSE`, `package.json`, `plugin.json` and `marketplace.json` all
+  declare the same licence, that the declaration matches the text in `LICENSE`, and that a declared
+  Apache-2.0 actually ships a `NOTICE`. The licence previously lived in four places that no check
+  connected, so any one of them could be edited alone while every gate passed.
+
+Relicensing applies forward. `@fyrlabs/groundtruth@0.2.0` has never been published, so no grant under
+the new identity has been issued; `@sathvikc/groundtruth@0.1.0` was published under MIT and those
+recipients keep their MIT rights permanently, since MIT is irrevocable.
+
 ### Fixed
 
 Four defects that only a live run against a real repository could surface. All four produced a

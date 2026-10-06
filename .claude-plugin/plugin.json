@@ -7,7 +7,7 @@
   },
   "homepage": "https://github.com/fyrlabs/groundtruth",
   "repository": "https://github.com/fyrlabs/groundtruth",
-  "license": "MIT",
+  "license": "Apache-2.0",
   "keywords": [
     "research",
     "verification",

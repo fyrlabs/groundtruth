@@ -213,4 +213,4 @@ needs a validator, a clone step, or a provenance graph.
 
 ## License
 
-MIT
+[Apache-2.0](LICENSE)

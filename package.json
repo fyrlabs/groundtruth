@@ -12,10 +12,7 @@
     "agents",
     "mcp"
   ],
-  "author": {
-    "name": "fyrlabs"
-  },
-  "license": "MIT",
+  "license": "Apache-2.0",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/fyrlabs/groundtruth.git"
@@ -44,6 +41,7 @@
     "CHANGELOG.md",
     "README.md",
     "LICENSE",
+    "NOTICE",
     "test/fixtures/"
   ],
   "scripts": {

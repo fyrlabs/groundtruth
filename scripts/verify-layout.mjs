@@ -351,6 +351,39 @@ check('the resumable stage list and the write gate agree on stage names', () => 
   return `${resumable.length} resumable stages, all writable (${validated.length} validated)`;
 });
 
+check('every surface declares the same licence, and it matches the LICENSE file', () => {
+  // The licence appeared in four places: LICENSE, package.json, plugin.json and marketplace.json. Any
+  // one of them could be edited alone, and nothing would notice — npm, the plugin listing and the
+  // repository would disagree while every check passed.
+  const pkg = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8'));
+  const plugin = JSON.parse(readFileSync(join(ROOT, '.claude-plugin', 'plugin.json'), 'utf8'));
+  const market = JSON.parse(readFileSync(join(ROOT, '.claude-plugin', 'marketplace.json'), 'utf8'));
+
+  const declared = new Set([pkg.license, plugin.license, ...market.plugins.map((p) => p.license)]);
+  if (declared.size !== 1) {
+    throw new Error(`licence is declared inconsistently: ${[...declared].join(' / ')}`);
+  }
+  const [id] = [...declared];
+
+  // The identifier has to mean something: SPDX ids for Apache and MIT differ from the text in the file.
+  const licenseText = readFileSync(join(ROOT, 'LICENSE'), 'utf8');
+  const expects = { 'Apache-2.0': 'Apache License', MIT: 'MIT License' };
+  if (!expects[id]) throw new Error(`licence "${id}" has no expected LICENSE text — add it to this check rather than trusting it`);
+  if (!licenseText.includes(expects[id])) {
+    throw new Error(`declared licence ${id} does not match the LICENSE file, which is not the ${expects[id]} text`);
+  }
+
+  // Apache-2.0 requires a NOTICE when the work carries attribution notices; shipping the licence
+  // without it is the most common way an Apache package ships non-compliantly.
+  if (id === 'Apache-2.0' && !existsSync(join(ROOT, 'NOTICE'))) {
+    throw new Error('declared Apache-2.0 but there is no NOTICE file');
+  }
+  if (id === 'Apache-2.0' && !pkg.files.includes('NOTICE')) {
+    throw new Error('NOTICE is not in the package.json files allowlist, so it would not ship');
+  }
+  return `${id}, declared in 3 places, LICENSE file agrees, NOTICE ships`;
+});
+
 check('the orchestrator reads its arguments', () => {
   const file = join(ROOT, 'skills', 'analyze', 'SKILL.md');
   if (!existsSync(file)) throw new Error('skills/analyze/SKILL.md missing');
