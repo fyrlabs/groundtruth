@@ -19,6 +19,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `.github/pull_request_template.md`**, following the org's format. The checklist is written for this
   repository rather than copied: its items are the ones that actually failed here, including the
   empirical plugin probe and the absence of `bin`/`postinstall` in the tarball.
+- **CI was red on every commit in the repository history.** `ci.yml` held a multi-line `run: node -e "..."`, which YAML reads as a plain scalar, so the embedded JavaScript folded into the run value and the rest of the file misparsed. GitHub created a run with zero jobs and reported "This run likely failed because of a workflow file issue", so no job and therefore no test ever ran while every local gate passed. The run value is a block scalar now, and `verify-layout.mjs` rejects any `run:` line with an unbalanced double quote, plus any job without `runs-on`. Separately, `verify:layout` shells out to `claude plugin validate`, so the gate could never pass on a runner; CI now installs the Claude Code CLI, which is CI tooling and not a runtime dependency of the package.
+
 - `verify-layout.mjs` asserts the release workflow triggers on `release: published` rather than a tag
   push, carries `id-token: write` and `--provenance`, can be re-run, and that the lockfile and the three
   `.github` documents exist. Reverting the trigger to a tag push fails the check.
