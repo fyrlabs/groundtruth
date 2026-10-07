@@ -37,16 +37,28 @@ jobs:
           registry-url: https://registry.npmjs.org
           cache: npm
       - run: npm ci
+      # `npm run verify` includes verify:layout, which shells out to `claude plugin validate`. Without
+      # the CLI the gate cannot pass on a runner, so the first release attempt died at this step with
+      # nothing published. This is CI tooling; the published package still has zero dependencies.
+      - run: npm install -g @anthropic-ai/claude-code@^2
       - run: npm run verify
       - name: Confirm the tag matches the manifest version
         # Publishing a tag whose name disagrees with package.json ships an artifact whose reported
         # version is a guess. The tag is the release's identity; make it checkable.
         run: |
           set -euo pipefail
-          want="${GITHUB_REF_NAME#v}"
+          # GITHUB_REF_NAME is the branch a manual dispatch ran from, not the tag it checked out, so
+          # reading it would make this check pass only for a release event. Take the tag from the
+          # checkout, which is what actually gets published.
+          tag=$(git describe --tags --exact-match 2>/dev/null || echo "")
+          if [ -z "$tag" ]; then
+            echo "checked out commit is not an exact tag, so there is nothing to reconcile against" >&2
+            exit 1
+          fi
+          want="${tag#v}"
           have=$(node -p "require('./package.json').version")
           if [ "$want" != "$have" ]; then
-            echo "tag ${GITHUB_REF_NAME} does not match package.json version ${have}" >&2
+            echo "tag $tag does not match package.json version $have" >&2
             exit 1
           fi
       # Skip a version that is already on the registry: npm rejects a republish of an existing
