@@ -1,7 +1,8 @@
 name: CI
 on:
   push:
-    branches: [main]
+    branches: [ci-probe]
+  workflow_dispatch:
 jobs:
   ping:
     runs-on: ubuntu-latest
