@@ -86,7 +86,10 @@ export function synthesize(profiles) {
       `${repos.length} ${repos.length === 1 ? 'repository' : 'repositories'} profiled. ` +
       `Of ${totals.claims} specific claims the projects made about themselves, ${totals.verified} ` +
       `were confirmed against implementation code, ${totals.contradicted} were contradicted, and ` +
-      `${totals.uncovered} could not be adjudicated by any verifier.`,
+      // `uncovered` is the count nobody could reach a verdict on at all, which is not the same as
+      // `unverifiable`: a claim can be adjudicated and still be unverifiable, and conflating the two
+      // reported a fully-covered run as having nothing it could not settle.
+      `${totals.uncovered} could not be adjudicated by any verifier · ${totals.unverifiable} adjudicated but unverifiable.`,
     );
     if (strongest.length) {
       lines.push('', 'Most of what these projects claim held up:');

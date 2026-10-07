@@ -65,15 +65,40 @@ for (const { re, why } of SECRET_PATTERNS) {
 // Writing outside the pipeline's own state, or into a clone, breaks the read-only invariant the
 // analysis depends on.
 const clone = cloneRoot();
+// The configured clone root, which is not necessarily under ~/.cache. The previous revision matched
+// only the literal `.cache/groundtruth` plus a loose `groundtruth/` guess, so with GROUNDTRUTH_CLONE_DIR
+// set anywhere else — the documented way to run this, and what the live runs used — `cp x <clone>/y`
+// and `2>> <clone>/log` were allowed. The comment below claimed the directory was configurable; it was
+// not. Read the real root rather than guessing at its shape.
+function escapeRegExp(text) {
+  return String(text).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+const CONFIGURED_ROOT = cloneRoot();
+const CONFIGURED_PATH = new RegExp(escapeRegExp(CONFIGURED_ROOT) + '(?:[/\\\\]|$)', 'i');
+
 const GROUNDTRUTH_PATH = /(?:\.cache\/groundtruth|groundtruth[\w.-]*(?:\/|$))/;
 
 // Detect a clone path from the command text itself, not only from the configured root. The clone
 // directory is configurable and a previous version may have written elsewhere; matching the literal
 // configured path missed every `git -C ~/.cache/groundtruth/... pull` and let it through.
-const touchesClone = GROUNDTRUTH_PATH.test(command) ||
+const touchesClone = CONFIGURED_PATH.test(command) || GROUNDTRUTH_PATH.test(command) ||
   /(?:-C|--git-dir|--work-tree)[\s"'=]+[^\s"']*groundtruth/i.test(command);
 
-const MUTATING = /\b(?:rm|mv|cp|chmod|chown|ln|mkdir|tee|dd|install|touch|truncate|shred)\b|[^\n]*\d>>?\s*\S/;
+// Redirects: `>`, `>>` and `n>`, but not `2>&1` or `&>`, which duplicate a descriptor rather than write
+// a file, and not `->` or `=>`. The previous pattern required a digit before the `>`, so `echo x > <file>`
+// — the most ordinary way to write a file — was not a mutation at all, and inside a clone that is the
+// thing this guard exists to stop.
+// Deliberately crude: it cannot tell a redirect from a `>` inside a quoted pattern, so
+// `grep "a > b" <clone>/f` is denied. A false positive on a read is the safe direction for a guard
+// whose whole job is refusing writes into a directory the pipeline trusts.
+// The character before the `>` must not be a letter or underscore, so `a>b` in code is not a
+// redirect, and not `=` or `-`, so `=>` and `->` are not redirects. A digit is allowed, because
+// `2>>file` is a file-descriptor-numbered append and does write.
+const REDIRECT = /(?:^|[^A-Za-z_>=-])>{1,2}\s*(?![-=&])\S/;
+const MUTATOR = /\b(?:rm|mv|cp|chmod|chown|ln|mkdir|tee|dd|install|touch|truncate|shred)\b|\bsed\s+-i/;
+const MUTATING = new RegExp(`${MUTATOR.source}|[^\\n]*${REDIRECT.source}`);
+
 if (touchesClone && MUTATING.test(command)) {
   logEvent('bash-denied-clone-write', { command: command.slice(0, 200) });
   deny('Blocked: clones are read-only for the analysis. Two agents reading a tree that one of them ' +

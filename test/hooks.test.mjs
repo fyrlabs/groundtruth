@@ -33,6 +33,7 @@ function decision(script, input, opts) {
 export default (ctx) => {
   const { test, assert } = ctx;
   readLogTests(ctx);
+  cloneReadOnlyTests(ctx);
   test('every hook emits exactly one JSON document', () => {
     for (const script of ['guard-read.mjs', 'guard-bash.mjs', 'guard-write.mjs', 'scrub-read.mjs']) {
       runHook(script, {});
@@ -241,6 +242,68 @@ export default (ctx) => {
 // logged, the read log was never created, and the reconciler's profile was refused — the pipeline could
 // not complete. The repo key is now derived from the clone-relative path, because clones are laid out as
 // <cloneRoot>/<owner.repo>/... and the first segment is the key.
+
+// Clones are read-only, and that has to hold wherever the clone root actually is.
+//
+// Running the pipeline end to end with GROUNDTRUTH_CLONE_DIR pointed at a temp directory exposed both
+// halves of this. `2>&1` matched the numeric-redirect mutation pattern, so read-only commands like
+// `grep ... <clone> 2>&1 | head` were denied. And the guard matched only the literal `.cache/groundtruth`
+// plus a loose `groundtruth/` guess, so with a configured root `cp x <clone>/y` and `2>> <clone>/log`
+// were allowed — the read-only guarantee silently did not apply. A comment in the file claimed the
+// directory was configurable. It was not.
+
+export function cloneReadOnlyTests({ test, assert }) {
+  function decide(command, { cloneDir }) {
+    const dir = mkdtempSync(join(tmpdir(), 'gt-guard-'));
+    const prev = process.env.GROUNDTRUTH_CLONE_DIR;
+    process.env.GROUNDTRUTH_CLONE_DIR = cloneDir;
+    try {
+      const env = { ...process.env };
+      if (cloneDir) env.GROUNDTRUTH_CLONE_DIR = cloneDir;
+      else delete env.GROUNDTRUTH_CLONE_DIR;
+      const out = spawnSync(process.execPath, [join(ROOT, 'scripts', 'guard-bash.mjs')], {
+        input: JSON.stringify({ tool_input: { command } }),
+        encoding: 'utf8',
+        env,
+      });
+      return JSON.parse(out.stdout || '{}').hookSpecificOutput ? 'denied' : 'allowed';
+    } finally {
+      if (prev === undefined) delete process.env.GROUNDTRUTH_CLONE_DIR;
+      else process.env.GROUNDTRUTH_CLONE_DIR = prev;
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }
+
+  const CLONES = '/tmp/gt-custom-root/sources';
+
+  test('a file-descriptor redirect is not treated as a write', () => {
+    // 2>&1 duplicates a descriptor and writes nothing. Denying it blocked most of what an agent does
+    // when validating a payload against a clone.
+    assert.equal(decide(`grep -n . ${CLONES}/acme.tool/README.md 2>&1 | head -5`, { cloneDir: CLONES }), 'allowed');
+    assert.equal(decide(`cat ${CLONES}/acme.tool/reads.jsonl 2>&1`, { cloneDir: CLONES }), 'allowed');
+  });
+
+  test('a real redirect into the configured clone root is denied', () => {
+    assert.equal(decide(`node scripts/clone.mjs 2>> ${CLONES}/acme.tool/log.txt`, { cloneDir: CLONES }), 'denied');
+    assert.equal(decide(`echo x > ${CLONES}/acme.tool/new.txt`, { cloneDir: CLONES }), 'denied');
+  });
+
+  test('copying into the configured clone root is denied', () => {
+    assert.equal(decide(`cp something ${CLONES}/acme.tool/y`, { cloneDir: CLONES }), 'denied');
+    assert.equal(decide(`rm -rf ${CLONES}/acme.tool/README.md`, { cloneDir: CLONES }), 'denied');
+    // sed -i rewrites in place and was not in the mutator list at all.
+    assert.equal(decide(`sed -i s/a/b/ ${CLONES}/acme.tool/src/index.ts`, { cloneDir: CLONES }), 'denied');
+  });
+
+  test('reading the configured clone root stays allowed', () => {
+    assert.equal(decide(`cat ${CLONES}/acme.tool/reads.jsonl`, { cloneDir: CLONES }), 'allowed');
+    assert.equal(decide(`grep -rn thing ${CLONES}/acme.tool/src`, { cloneDir: CLONES }), 'allowed');
+  });
+
+  test('the default clone root is still guarded without the environment variable', () => {
+    assert.equal(decide('rm -rf ~/.cache/groundtruth/sources/acme.tool', { cloneDir: undefined }), 'denied');
+  });
+}
 
 export function readLogTests({ test, assert }) {
   function withCloneRoot(fn) {

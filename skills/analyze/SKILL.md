@@ -244,7 +244,7 @@ For `CONTENT_DRIFT` repos, run 5c only.
 Validate every payload before it reaches the next stage:
 
 ```bash
-node ${CLAUDE_PLUGIN_ROOT}/scripts/validate-payload.mjs <file>
+node ${CLAUDE_PLUGIN_ROOT}/scripts/validate-payload.mjs <file> --key <owner.repo>
 ```
 
 ## Step 6 — Reconcile and render
