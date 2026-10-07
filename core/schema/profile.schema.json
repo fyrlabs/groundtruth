@@ -291,6 +291,7 @@
           "downgrade",
           "evidence",
           "quote",
+          "source",
           "tier",
           "verdicts"
         ],
@@ -394,6 +395,25 @@
             "description": "Verbatim text from the cited source file. verifyQuote checks it occurs there.",
             "minLength": 8,
             "maxLength": 1000
+          },
+          "source": {
+            "type": "object",
+            "description": "Where the quoted text comes from. verifyQuote checks the quote occurs there, near the line.",
+            "required": [
+              "path",
+              "line"
+            ],
+            "properties": {
+              "path": {
+                "type": "string",
+                "minLength": 1
+              },
+              "line": {
+                "type": "integer",
+                "minimum": 1
+              }
+            },
+            "additionalProperties": false
           }
         }
       }

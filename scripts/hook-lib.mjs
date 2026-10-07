@@ -103,8 +103,14 @@ export function recordRead(payload) {
 
     // Convert back to the clone-relative, canonical spelling the validator will look for.
     const rel = relative(clone, absolute);
-    const key = process.env.GROUNDTRUTH_REPO_KEY;
-    if (!key) return;
+    // Derive the repo key from the path rather than requiring an environment variable. Clones are
+    // laid out as <cloneRoot>/<owner.repo>/..., so the first segment *is* the key. The orchestrator
+    // never set GROUNDTRUTH_REPO_KEY, so every read went unlogged, the read log was never created, and
+    // every verdict citing a file was rejected — the pipeline could not complete. Found by running the
+    // plugin end to end against a real repository.
+    const fromPath = rel.split(sep)[0];
+    const key = process.env.GROUNDTRUTH_REPO_KEY || fromPath;
+    if (!key || !/^[a-z0-9.-]+\.[a-z0-9._-]+$/.test(key)) return;
 
     const dir = join(stateRoot(), 'repos', key);
     mkdirSync(dir, { recursive: true });

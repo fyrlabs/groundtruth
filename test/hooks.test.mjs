@@ -3,10 +3,11 @@
 // revisions of these same guards.
 
 import { execFileSync, spawnSync } from 'node:child_process';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { recordRead } from '../scripts/hook-lib.mjs';
 
 const ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
 const HOME = process.env.HOME || '';
@@ -29,7 +30,9 @@ function decision(script, input, opts) {
   return runHook(script, input, opts).hookSpecificOutput?.permissionDecision || 'allow';
 }
 
-export default ({ test, assert }) => {
+export default (ctx) => {
+  const { test, assert } = ctx;
+  readLogTests(ctx);
   test('every hook emits exactly one JSON document', () => {
     for (const script of ['guard-read.mjs', 'guard-bash.mjs', 'guard-write.mjs', 'scrub-read.mjs']) {
       runHook(script, {});
@@ -230,3 +233,86 @@ export default ({ test, assert }) => {
     }
   });
 };
+
+// A read inside a clone must be logged, or every verdict that cites a file is rejected.
+//
+// Found by running the plugin end to end against a real repository: recordRead returned early unless
+// GROUNDTRUTH_REPO_KEY was set, and nothing in the orchestrator or any agent ever set it. No read was
+// logged, the read log was never created, and the reconciler's profile was refused — the pipeline could
+// not complete. The repo key is now derived from the clone-relative path, because clones are laid out as
+// <cloneRoot>/<owner.repo>/... and the first segment is the key.
+
+export function readLogTests({ test, assert }) {
+  function withCloneRoot(fn) {
+    const root = mkdtempSync(join(tmpdir(), 'gt-readlog-'));
+    const prev = { state: process.env.GROUNDTRUTH_STATE_DIR, clones: process.env.GROUNDTRUTH_CLONE_DIR, key: process.env.GROUNDTRUTH_REPO_KEY };
+    process.env.GROUNDTRUTH_STATE_DIR = join(root, 'state');
+    process.env.GROUNDTRUTH_CLONE_DIR = join(root, 'clones');
+    delete process.env.GROUNDTRUTH_REPO_KEY;
+    const sources = join(root, 'clones', 'acme.tool');
+    mkdirSync(join(sources, 'src'), { recursive: true });
+    writeFileSync(join(sources, 'README.md'), '# doc\n');
+    writeFileSync(join(sources, 'src', 'index.ts'), 'export {};\n');
+    try {
+      return fn({ root, sources });
+    } finally {
+      for (const k of ['GROUNDTRUTH_STATE_DIR', 'GROUNDTRUTH_CLONE_DIR']) {
+        if (prev[k] === undefined) delete process.env[k];
+        else process.env[k] = prev[k];
+      }
+      if (prev.key !== undefined) process.env.GROUNDTRUTH_REPO_KEY = prev.key;
+      rmSync(root, { recursive: true, force: true });
+    }
+  }
+
+  test('a read is logged without GROUNDTRUTH_REPO_KEY being set', () => {
+    withCloneRoot(({ sources }) => {
+      recordRead({ tool_input: { file_path: join(sources, 'README.md') }, tool_name: 'Read', agent_type: 'technical-verifier' });
+      const log = join(process.env.GROUNDTRUTH_STATE_DIR, 'repos', 'acme.tool', 'reads.jsonl');
+      assert.ok(existsSync(log), 'the read log must be created from the path alone');
+      const entry = JSON.parse(readFileSync(log, 'utf8').trim());
+      assert.equal(entry.agent, 'technical-verifier');
+      assert.match(entry.path, /acme\.tool\/README\.md$/);
+    });
+  });
+
+  test('the key is taken from the path, so one run logging three repos does not merge them', () => {
+    withCloneRoot(({ root, sources }) => {
+      const other = join(root, 'clones', 'other.repo');
+      mkdirSync(join(other, 'src'), { recursive: true });
+      writeFileSync(join(other, 'src', 'index.ts'), 'export {};\n');
+      recordRead({ tool_input: { file_path: join(sources, 'README.md') }, tool_name: 'Read', agent_type: 'a' });
+      recordRead({ tool_input: { file_path: join(other, 'src', 'index.ts') }, tool_name: 'Read', agent_type: 'b' });
+      const a = join(process.env.GROUNDTRUTH_STATE_DIR, 'repos', 'acme.tool', 'reads.jsonl');
+      const b = join(process.env.GROUNDTRUTH_STATE_DIR, 'repos', 'other.repo', 'reads.jsonl');
+      assert.ok(existsSync(a) && existsSync(b), 'each repository must get its own log');
+      assert.equal(readFileSync(a, 'utf8').includes('other.repo'), false, 'logs must not cross-contaminate');
+    });
+  });
+
+  test('a read outside any clone is not logged', () => {
+    withCloneRoot(() => {
+      recordRead({ tool_input: { file_path: join(tmpdir(), 'elsewhere.md') }, tool_name: 'Read', agent_type: 'x' });
+      const repos = join(process.env.GROUNDTRUTH_STATE_DIR, 'repos');
+      assert.ok(!existsSync(repos) || readdirSync(repos).length === 0, 'a path outside the clone root must not create a log');
+    });
+  });
+
+  test('a traversal attempt cannot escape into another repository key', () => {
+    withCloneRoot(({ sources }) => {
+      recordRead({ tool_input: { file_path: join(sources, '..', 'other.repo', 'src', 'index.ts') }, tool_name: 'Read', agent_type: 'x' });
+      const repos = join(process.env.GROUNDTRUTH_STATE_DIR, 'repos');
+      // Either it is treated as outside the clone and ignored, or it lands under its own key — but it
+      // must never be written into acme.tool's log as if it were that repository's evidence.
+      if (existsSync(repos)) {
+        for (const key of readdirSync(repos)) {
+          const log = join(repos, key, 'reads.jsonl');
+          if (existsSync(log)) {
+            assert.equal(key === 'acme.tool' && readFileSync(log, 'utf8').includes('other.repo'), false,
+              'a traversing path was logged as evidence for the wrong repository');
+          }
+        }
+      }
+    });
+  });
+}

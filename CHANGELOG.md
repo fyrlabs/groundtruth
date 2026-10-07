@@ -31,6 +31,8 @@ First release. The pipeline clones a repository and adjudicates the claims that 
 
 ### Fixed
 
+- **Reads inside a clone are logged.** The read hook returned early unless `GROUNDTRUTH_REPO_KEY` was set, and nothing in the orchestrator or any agent ever set it, so no read was ever recorded. The read log was therefore never created, and every verdict citing a file was rejected — the pipeline could not run to completion at all. The repository key is now derived from the path being read, so a run covering several repositories keeps them separate. Found by running the plugin end to end against a real repository.
+- **The profile schema and the profile validator agree.** The validator requires a quoted claim to carry the file and line it came from, while the schema forbade any field it did not list, so a profile the validator accepted could be rejected by the schema. Both now declare `source`, and an invariant asserts the two cannot drift apart again.
 - **CI now runs.** An invalid workflow file meant GitHub created a run with zero jobs on every push, so no test had ever executed in CI while every local gate passed. A malformed `run:` value is now rejected before it can reach `.github/workflows/`.
 - **A payload written outside the state directory is no longer possible.** The write gate's `--file` argument doubled as an output path, so a profile could be written where no resume could find it, and the run reported success.
 - **A finished repository is recognised as finished.** The resumable stage list named the reconcile stage differently from every write path, so nothing ever wrote it and every resume redid the most expensive stage in the pipeline.

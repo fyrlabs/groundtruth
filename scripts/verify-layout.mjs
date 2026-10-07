@@ -398,6 +398,38 @@ check('every surface declares the same licence, and it matches the LICENSE file'
   return `${id}, declared in 3 places, LICENSE file agrees, NOTICE ships`;
 });
 
+check('the shipped profile schema permits every field the validator demands', () => {
+  // validateProfile requires `claims[].quote` and `claims[].source`, while profile.schema.json sets
+  // additionalProperties:false on a claim. Adding the validator requirement without adding the schema
+  // property made the two contradict each other, and the contradiction only showed up when the real
+  // reconciler tried to write a profile. A schema nobody checks against the code that reads it is
+  // documentation wearing a validation costume.
+  const schema = JSON.parse(readFileSync(join(ROOT, 'core', 'schema', 'profile.schema.json'), 'utf8'));
+  const claim = schema.properties.claims.items;
+  const validate = readFileSync(join(ROOT, 'core', 'lib', 'validate.mjs'), 'utf8');
+
+  // Every field the profile validator reads off a claim must be declared, or additionalProperties:false
+  // rejects a payload the validator itself demands.
+  const demanded = ['claim', 'tier', 'evidence', 'quote', 'source', 'verdicts', 'downgrade'];
+  const declared = new Set(Object.keys(claim.properties));
+  const missing = demanded.filter((f) => !declared.has(f));
+  if (missing.length) {
+    throw new Error(`validateProfile requires claims[].${missing.join(', claims[].')} but profile.schema.json does not declare it`);
+  }
+  void validate;
+
+  for (const field of demanded) {
+    if (!claim.required.includes(field) && (field === 'quote' || field === 'source')) {
+      throw new Error(`claims[].${field} is verified by validateProfile but is not required by the schema`);
+    }
+  }
+  if (claim.additionalProperties === false) {
+    // Sanity: the schema is strict, so a missing property is a hard rejection rather than a shrug.
+    return `schema and validator agree on ${demanded.length} claim fields`;
+  }
+  return 'schema and validator agree';
+});
+
 check('every GitHub Actions workflow is structurally valid, and names its jobs', () => {
   // ci.yml contained a multi-line `run: node -e "` — a YAML plain scalar, so the JavaScript folded into
   // it and every line after it misparsed. GitHub rejected the file, produced a run with zero jobs, and
