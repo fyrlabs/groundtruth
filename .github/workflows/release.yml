@@ -1,0 +1,69 @@
+name: Release
+
+# Publishing happens when a GitHub release is published, not when a tag is pushed. A tag is then a
+# cheap, reversible marker: cut as many as are useful, push them, and publish only the ones that earn
+# it. Triggering on the tag made the two the same act, so there was no way to hold a candidate anywhere
+# except on the machine that tagged it.
+#
+# `workflow_dispatch` covers the case where a release exists but its run failed, which is otherwise
+# awkward to retry.
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Tag to publish from
+        required: true
+
+permissions:
+  contents: read
+  # Required for npm provenance: the registry verifies the build against this identity rather than
+  # trusting the tarball the runner uploaded.
+  id-token: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      # A release event checks out the tag it was created from; a manual run has to be told which tag,
+      # or it would publish whatever main happens to hold.
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+          registry-url: https://registry.npmjs.org
+          cache: npm
+      - run: npm ci
+      - run: npm run verify
+      - name: Confirm the tag matches the manifest version
+        # Publishing a tag whose name disagrees with package.json ships an artifact whose reported
+        # version is a guess. The tag is the release's identity; make it checkable.
+        run: |
+          set -euo pipefail
+          want="${GITHUB_REF_NAME#v}"
+          have=$(node -p "require('./package.json').version")
+          if [ "$want" != "$have" ]; then
+            echo "tag ${GITHUB_REF_NAME} does not match package.json version ${have}" >&2
+            exit 1
+          fi
+      # Skip a version that is already on the registry: npm rejects a republish of an existing
+      # version, and under `set -e` that would abort the job. This is what makes re-running a failed
+      # release safe, and it is why a partial publish does not need a new version number.
+      - name: Publish if this version is not already on the registry
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          set -euo pipefail
+          name=$(node -p "require('./package.json').name")
+          version=$(node -p "require('./package.json').version")
+          if npm view "$name@$version" version >/dev/null 2>&1; then
+            echo "$name@$version is already published, skipping"
+            exit 0
+          fi
+          echo "publishing $name@$version"
+          # --provenance links the tarball to this workflow run. It needs id-token: write above and
+          # the public package to be visible, so a private-scope package cannot be attested.
+          npm publish --access public --provenance

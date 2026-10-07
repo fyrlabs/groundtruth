@@ -398,6 +398,46 @@ check('every surface declares the same licence, and it matches the LICENSE file'
   return `${id}, declared in 3 places, LICENSE file agrees, NOTICE ships`;
 });
 
+check('the release path is wired the way the org wires it', () => {
+  // A release workflow that triggers on a tag push means the tag and the publish are the same act, so
+  // there is no way to hold a candidate anywhere except on the machine that tagged it. Every other
+  // repository in the org publishes on `release: published`; a disagreement here is silent.
+  const release = join(ROOT, '.github', 'workflows', 'release.yml');
+  if (!existsSync(release)) throw new Error('.github/workflows/release.yml is missing — a release can never be published from CI');
+  const text = readFileSync(release, 'utf8');
+
+  if (!/release:\s*\n\s*types: \[published\]/.test(text)) {
+    throw new Error('release.yml does not trigger on `release: published`');
+  }
+  if (!/workflow_dispatch/.test(text)) {
+    throw new Error('release.yml has no workflow_dispatch input, so a failed publish cannot be retried without re-tagging');
+  }
+  if (!/id-token: write/.test(text)) {
+    throw new Error('release.yml lacks `id-token: write`, which npm --provenance requires');
+  }
+  if (!/--provenance/.test(text)) {
+    throw new Error('release.yml publishes without --provenance, so the tarball is unattested');
+  }
+  // Re-publishing an existing version aborts the job, which would strand a release that recovered.
+  if (!/already published/.test(text)) {
+    throw new Error('release.yml does not skip a version already on the registry, so a rerun cannot succeed');
+  }
+
+  // `npm ci` needs a lockfile. Without one the release job fails at install, after the release exists.
+  if (!existsSync(join(ROOT, 'package-lock.json'))) {
+    throw new Error('package-lock.json is missing but release.yml runs `npm ci`');
+  }
+
+  // The checklist and the notes template are how a release is actually performed; a missing one is how
+  // a version ships without the checks that only fail in a published artifact.
+  for (const required of ['RELEASE_CHECKLIST.md', 'RELEASE_TEMPLATE.md', 'pull_request_template.md']) {
+    const file = join(ROOT, '.github', required);
+    if (!existsSync(file)) throw new Error(`.github/${required} is missing`);
+    if (!readFileSync(file, 'utf8').trim()) throw new Error(`.github/${required} is empty`);
+  }
+  return 'release on published-release, provenance, rerunnable, checklist present';
+});
+
 check('the orchestrator reads its arguments', () => {
   const file = join(ROOT, 'skills', 'analyze', 'SKILL.md');
   if (!existsSync(file)) throw new Error('skills/analyze/SKILL.md missing');

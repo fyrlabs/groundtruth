@@ -9,6 +9,21 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **`.github/workflows/release.yml`**, matching the other four repositories in the org. Publishing is
+  triggered by a GitHub release being published, **not** by pushing a tag: a tag is a cheap reversible
+  candidate, and publishing is the separate, deliberate half. The workflow checks the tag against the
+  manifest version, runs `npm run verify`, skips a version already on the registry so a failed publish
+  can be re-run without burning a version number, and publishes with `--provenance`. `NPM_TOKEN` must be
+  a read-write token for the `@fyrlabs` scope.
+- **`.github/RELEASE_CHECKLIST.md`, `.github/RELEASE_TEMPLATE.md` and
+  `.github/pull_request_template.md`**, following the org's format. The checklist is written for this
+  repository rather than copied: its items are the ones that actually failed here, including the
+  empirical plugin probe and the absence of `bin`/`postinstall` in the tarball.
+- `verify-layout.mjs` asserts the release workflow triggers on `release: published` rather than a tag
+  push, carries `id-token: write` and `--provenance`, can be re-run, and that the lockfile and the three
+  `.github` documents exist. Reverting the trigger to a tag push fails the check.
+- `package-lock.json` and `.npmrc`, so the release job's `npm ci` has a lockfile to install from.
+
 - **Claim quotations are verified against the file they cite**, on the `profile` rather than on the
   intermediate analysis payload. A claim now requires `quote` and `source`, and the quotation must occur
   in the cited file within three lines of the line it cites. Transcription tolerance is preserved for
