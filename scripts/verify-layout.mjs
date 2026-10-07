@@ -398,6 +398,58 @@ check('every surface declares the same licence, and it matches the LICENSE file'
   return `${id}, declared in 3 places, LICENSE file agrees, NOTICE ships`;
 });
 
+check('every GitHub Actions workflow is structurally valid, and names its jobs', () => {
+  // ci.yml contained a multi-line `run: node -e "` — a YAML plain scalar, so the JavaScript folded into
+  // it and every line after it misparsed. GitHub rejected the file, produced a run with zero jobs, and
+  // reported it as "This run likely failed because of a workflow file issue". CI was therefore red on
+  // every commit in the repository's history while passing perfectly on every machine, including this
+  // one: no job ran, so no test ran, and nothing said so.
+  //
+  // There is no YAML dependency and there will not be one — this project ships zero. So the check is
+  // structural rather than a real parse: it catches the shapes that actually break these files.
+  const dir = join(ROOT, '.github', 'workflows');
+  const files = existsSync(dir) ? readdirSync(dir).filter((f) => f.endsWith('.yml') || f.endsWith('.yaml')) : [];
+  if (!files.length) throw new Error('no workflows found — CI cannot run at all');
+
+  for (const file of files) {
+    const text = readFileSync(join(dir, file), 'utf8');
+    const where = `.github/workflows/${file}`;
+
+    if (/\t/.test(text)) throw new Error(`${where} contains a tab; YAML forbids tabs for indentation`);
+    if (!/^name: \S/m.test(text)) throw new Error(`${where} has no top-level name, so GitHub registers it by filename`);
+
+    // The bug that shipped: a `run:` value carrying an unbalanced double quote and continuing over
+    // several lines. YAML reads the value as a plain scalar, so the JavaScript folds into it and every
+    // following line is misparsed. An odd number of quotes on the line is the shape; a block scalar
+    // (`run: |`) is the fix.
+    const unbalanced = text.split('\n').findIndex((line) => {
+      const run = line.match(/^\s*(?:- )?run:\s*(.+)$/);
+      if (!run) return false;
+      const value = run[1].trim();
+      if (value.startsWith('|') || value.startsWith('>')) return false;
+      return (value.match(/"/g) || []).length % 2 === 1;
+    });
+    if (unbalanced !== -1) {
+      throw new Error(`${where}:${unbalanced + 1} a run value opens a quote and does not close it on the same line — ` +
+        'use a block scalar (run: |) or close the quote on one line, or the rest of the file is misparsed');
+    }
+
+    // Every job needs somewhere to run. Scope the count to the jobs block: `on:` has two-space
+    // sub-keys too, and counting `push:` and `pull_request:` as jobs makes every workflow look broken.
+    const jobsIdx = text.search(/^jobs:\s*$/m);
+    if (jobsIdx === -1) throw new Error(`${where} has no jobs block`);
+    const body = text.slice(jobsIdx);
+    const jobs = [...body.matchAll(/^  ([a-z][a-z0-9_-]*):$/gm)].map((m) => m[1]);
+    if (!jobs.length) throw new Error(`${where} declares no jobs`);
+    const runsOn = (body.match(/^\s{4}runs-on:/gm) || []).length;
+    if (runsOn !== jobs.length) {
+      throw new Error(`${where} declares ${jobs.length} jobs but ${runsOn} runs-on; a job without runs-on builds no job`);
+    }
+    void files;
+  }
+  return `${files.length} workflows structurally valid`;
+});
+
 check('the release path is wired the way the org wires it', () => {
   // A release workflow that triggers on a tag push means the tag and the publish are the same act, so
   // there is no way to hold a candidate anywhere except on the machine that tagged it. Every other
